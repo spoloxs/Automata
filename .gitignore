@@ -1,0 +1,174 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual Environment
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# PyCharm
+.idea/
+
+# VS Code
+.vscode/
+*.code-workspace
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# API Keys and Credentials
+credentials.json
+token.json
+*.key
+*.pem
+
+# Logs
+*.log
+logs/
+*.log.*
+ram_diagnostic_output*.log
+latimes_test.log
+memory_test.log
+popup*.log
+test_results*.log
+
+# Test artifacts
+.pytest_cache/
+.cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+coverage.xml
+*.cover
+.hypothesis/
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+cache/
+*.db-journal
+
+# OmniParser weights (large files)
+OmniParser/weights/
+OmniParser/ckpts/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+*.ipynb
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Linux
+*~
+
+# Temporary files
+*.tmp
+*.temp
+*.swp
+*.swo
+*~
+
+# Debug output
+debug_output/
+*.png
+*.jpg
+*.jpeg
+screenshots/
+
+# Analysis and documentation (development artifacts)
+CRITICAL_LEAK_FOUND.md
+ELEMENT_OUTPUT_COMPARISON.md
+FINAL_MEMORY_AUDIT_REPORT.md
+INSTANCE_SHARING_ANALYSIS.md
+MEMORY_ANALYSIS_FINAL.md
+MEMORY_LEAK_FINAL_ANALYSIS.md
+MEMORY_LEAK_ROOT_CAUSE.md
+MEMORY_TEST_RESULTS_FINAL.md
+RAM_USAGE_ANALYSIS.md
+REFACTORING_COMPLETION_GUIDE.md
+REFACTORING_PLAN.md
+GITHUB_PREPARATION.md
+GIT_LFS_SETUP.md
+# Test files (keep test framework, exclude specific test runs)
+test_*.html
+test_report.txt
+mock_screen_parser.py
+
+# Google Cloud SDK
+google-cloud-sdk/
+google-cloud-cli-*.tar.gz
+google-cloud-sdk-*.tar.gz
+
+# Node modules (if any JS tooling)
+node_modules/
+
+# Playwright browsers cache
+.ms-playwright/
+
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Pyre type checker
+.pyre/
+
+# pytype static type analyzer
+.pytype/
+
+# Celery
+celerybeat-schedule
+celerybeat.pid
+
+# SageMath parsed files
+*.sage.py
+
+# Spyder project settings
+.spyderproject
+.spyproject
+
+# Rope project settings
+.ropeproject
+
+# mkdocs documentation
+/site
+
+# Backup files
+*.bak
+*.backup

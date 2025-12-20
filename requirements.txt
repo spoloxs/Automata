@@ -1,0 +1,32 @@
+# Core
+playwright>=1.40.0
+asyncio
+
+# LLM
+google-generativeai>=0.3.0
+langchain>=0.1.0
+langchain-google-genai>=0.0.6
+pydantic>=2.0
+
+# Vision/Parsing
+Pillow>=10.0.0
+torch>=2.0.0
+torchvision>=0.15.0
+ultralytics>=8.0.0
+transformers>=4.30.0
+supervision>=0.16.0
+
+# OCR
+easyocr>=1.7.0
+paddleocr>=2.7.0
+opencv-python>=4.8.0
+
+# Utilities
+numpy>=1.24.0
+requests>=2.31.0
+python-dotenv>=1.0.0
+psutil>=5.9.0  # For RAM usage monitoring
+redis>=5.0.0  # For persistent conversation storage
+
+# Gradio (optional, for OmniParser demo)
+gradio>=4.0.0
