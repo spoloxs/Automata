@@ -35,20 +35,25 @@ class ElementFormatter:
         # Include ALL elements if max not specified
         elements_to_show = elements if max_elements is None else elements[:max_elements]
         
+        # Get viewport size for pixel conversion
+        if viewport_size is None:
+            viewport_size = (1440, 900)  # Default viewport
+        
+        width, height = viewport_size
+        
         lines = [
             "=" * 80,
             f"PAGE ELEMENTS ({len(elements_to_show)} total)",
             "=" * 80,
             "",
             "FORMAT:",
-            "- [ID] = Element ID (use this to interact)",
-            "- BBOX = Bounding box [left, top, right, bottom] in 0-1 normalized coordinates",
+            "- CENTER = Center coordinates (x, y) in PIXELS - use these to click/type",
+            "- BBOX = Bounding box [left, top, right, bottom] in pixels",
             "- Tree symbols (└─) = Shows containment hierarchy",
-            "- (INSIDE #XXX) = Explicit parent reference",
             "",
             "CRITICAL RULES:",
-            "1. Use click(element_id=X) or type(element_id=X, text=...) to interact",
-            "2. Use get_element_details tool if you need coordinates/bbox/colors",
+            "1. Use click(x=640, y=360) with EXACT pixel coordinates shown below",
+            "2. Use type(x=640, y=360, text='...') for text input",
             "3. If element not here, use analyze_visual_content to find it",
             "",
             "=" * 80,
@@ -107,6 +112,14 @@ class ElementFormatter:
             else:
                 elem_type = elem.type
             
+            # Calculate pixel coordinates
+            center_x = int(elem.center[0] * width)
+            center_y = int(elem.center[1] * height)
+            left_px = int(elem.bbox[0] * width)
+            top_px = int(elem.bbox[1] * height)
+            right_px = int(elem.bbox[2] * width)
+            bottom_px = int(elem.bbox[3] * height)
+            
             # Build compact element line with interactivity indicator and parent reference
             content_preview = elem.content[:60] if elem.content else "(no text)"
             interactive_mark = "[interactive]" if elem.interactivity else "[static]"
@@ -116,9 +129,10 @@ class ElementFormatter:
             else:
                 lines.append(f"{prefix}[ID:{elem.id:03d}] {interactive_mark} {elem_type} \"{content_preview}\"")
             
-            # Add bbox coordinates (normalized 0-1 range)
+            # Add CENTER coordinates in PIXELS
             bbox_prefix = prefix + ("      " if indent == 0 else "   ")
-            lines.append(f"{bbox_prefix}BBOX: [{elem.bbox[0]:.3f}, {elem.bbox[1]:.3f}, {elem.bbox[2]:.3f}, {elem.bbox[3]:.3f}]")
+            lines.append(f"{bbox_prefix}CENTER: ({center_x}, {center_y}) px")
+            lines.append(f"{bbox_prefix}BBOX: [{left_px}, {top_px}, {right_px}, {bottom_px}] px")
             
             # Add DOM selectors if available
             dom_parts = []
@@ -150,8 +164,9 @@ class ElementFormatter:
             f"TOTAL: {len(elements_to_show)} elements listed",
             "",
             "REMEMBER:",
-            "- Use click(element_id=X) NOT coordinates!",
-            "- Use get_element_details if you need precise location info",
+            "- Use click(x=640, y=360) with EXACT pixel coordinates from CENTER above",
+            "- Use type(x=640, y=360, text='...') for text input",
+            "- Coordinates are in PIXELS - use them directly",
             "=" * 80
         ])
         
@@ -326,13 +341,14 @@ class ElementFormatter:
             interactive_count = sum(1 for e in type_elements if e.interactivity)
             lines.append(f"{elem_type}: {len(type_elements)} total ({interactive_count} interactive)")
             
-            # Show first few
-            for elem in type_elements[:3]:
-                content = elem.content[:40] if elem.content else ""
-                lines.append(f"  [{elem.id:03d}] \"{content}\"")
+            # Show first few (without IDs to force descriptive planning)
+            for elem in type_elements[:5]:
+                content = elem.content[:60] if elem.content else "(no text)"
+                # e.g., "  - 'Submit'"
+                lines.append(f"  - \"{content}\"")
             
-            if len(type_elements) > 3:
-                lines.append(f"  ... +{len(type_elements) - 3} more")
+            if len(type_elements) > 5:
+                lines.append(f"  ... +{len(type_elements) - 5} more")
             
             lines.append("")
         

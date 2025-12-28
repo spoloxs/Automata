@@ -354,7 +354,13 @@ class ActionLoop:
         self, actions: List[BrowserAction], elements: List[Any]
     ) -> List[ActionResult]:
         """
-        Execute list of actions.
+        Execute list of actions with auto-scroll and screen re-parsing.
+        
+        CRITICAL: For each action, we:
+        1. Check if target element is visible
+        2. Scroll to make it visible if needed
+        3. Re-parse screen to get fresh coordinates
+        4. Execute action with updated coordinates
 
         Args:
             actions: Actions to execute
@@ -370,6 +376,61 @@ class ActionLoop:
                 f"      ⚡ Executing action {i}/{len(actions)}: {action.action_type.value}"
             )
 
+            # CRITICAL: Scroll element into view BEFORE executing
+            # This ensures element is visible and we have fresh coordinates
+            needs_scroll = action.action_type.value in ['click', 'type', 'scroll_to_result']
+            
+            if needs_scroll and 'element_id' in action.parameters:
+                elem_id = action.parameters['element_id']
+                
+                # Find element in current list
+                elem = next((e for e in elements if e.id == elem_id), None)
+                
+                if elem:
+                    # Convert normalized coordinates to pixels
+                    x = int(elem.center[0] * self.viewport_size[0])
+                    y = int(elem.center[1] * self.viewport_size[1])
+                    
+                    # Check if element is in viewport (with margin)
+                    viewport_margin = 100  # pixels from edge
+                    viewport_w, viewport_h = self.viewport_size
+                    
+                    is_visible = (
+                        viewport_margin < x < (viewport_w - viewport_margin) and
+                        viewport_margin < y < (viewport_h - viewport_margin)
+                    )
+                    
+                    if not is_visible:
+                        log_info(f"         📜 Element {elem_id} not in viewport, scrolling into view...")
+                        
+                        try:
+                            # Scroll element to center of viewport
+                            await self.browser._center_on_position(x, y)
+                            await asyncio.sleep(0.5)  # Wait for scroll to complete
+                            
+                            # CRITICAL: Re-parse screen to get fresh element positions
+                            log_debug(f"         🔄 Re-parsing screen after scroll...")
+                            screenshot = await self.browser.capture_screenshot()
+                            elements = self.parser.parse(screenshot)
+                            
+                            # Re-enrich with DOM
+                            from web_agent.perception.screen_parser import enrich_elements_with_dom
+                            elements = await enrich_elements_with_dom(elements, self.browser, self.viewport_size)
+                            
+                            # Free screenshot
+                            del screenshot
+                            import gc
+                            gc.collect()
+                            
+                            log_success(f"         ✅ Scrolled and re-parsed {len(elements)} elements")
+                            
+                        except Exception as e:
+                            log_warn(f"         ⚠️  Scroll failed: {e}")
+                            # Continue anyway - element might still work
+                else:
+                    log_debug(f"         ℹ️  Element {elem_id} not found in element list")
+
+            # Execute action with current (possibly updated) elements
             result = await self.action_handler.handle_action(action, elements)
             results.append(result)
 

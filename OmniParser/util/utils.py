@@ -215,7 +215,7 @@ def get_parsed_content_icon(
             else:
                 cropped_image = cv2.resize(cropped_image, (64, 64))
                 croped_pil_image.append(to_pil(cropped_image))
-            log_debug(f"Cropped and resized image for box {i}")
+            # log_debug(f"Cropped and resized image for box {i}")  # Too verbose - commented out
         except Exception as e:
             log_warn(f"Failed to crop/resize image for box {i}: {e}")
             continue
@@ -593,22 +593,23 @@ def remove_overlap_new(boxes, iou_threshold, ocr_bbox=None):
                 # keep yolo boxes + prioritize ocr label
                 box_added = False
                 ocr_labels = ""
+                ocr_boxes_to_remove = []  # Track which OCR boxes to remove
                 for box3_elem in ocr_bbox:
                     if not box_added:
                         box3 = box3_elem["bbox"]
                         if is_inside(box3, box1):  # ocr inside icon
                             # box_added = True
-                            # delete the box3_elem from ocr_bbox
+                            # Mark box3_elem for removal instead of removing immediately
                             try:
                                 # gather all ocr labels
                                 ocr_labels += box3_elem["content"] + " "
-                                filtered_boxes.remove(box3_elem)
+                                ocr_boxes_to_remove.append(box3_elem)
                                 logging.debug(
-                                    f"OCR label '{box3_elem['content']}' merged into icon box {i}"
+                                    f"OCR label '{box3_elem['content']}' marked for merging into icon box {i}"
                                 )
                             except Exception as e:
                                 logging.warning(
-                                    f"Failed to remove box3_elem from filtered_boxes: {e}"
+                                    f"Failed to process box3_elem: {e}"
                                 )
                                 continue
                             # break
@@ -620,6 +621,11 @@ def remove_overlap_new(boxes, iou_threshold, ocr_bbox=None):
                             break
                         else:
                             continue
+                
+                # Remove OCR boxes after the loop to avoid list mutation during iteration
+                for box_to_remove in ocr_boxes_to_remove:
+                    if box_to_remove in filtered_boxes:
+                        filtered_boxes.remove(box_to_remove)
                 if not box_added:
                     if ocr_labels:
                         filtered_boxes.append(
@@ -775,6 +781,29 @@ def predict_yolo(model, image, box_threshold, imgsz, scale_img, iou_threshold=0.
     return boxes, conf, phrases
 
 
+def predict_with_detector(detector, image, box_threshold):
+    """
+    Generic detection function that works with any detector from detector_factory
+    
+    Args:
+        detector: BaseDetector instance from detector_factory
+        image: PIL Image
+        box_threshold: Confidence threshold
+        
+    Returns:
+        boxes, scores, phrases (same format as predict_yolo)
+    """
+    import logging
+    
+    detector_name = detector.get_name()
+    logging.info(f"Using {detector_name} detector with threshold={box_threshold}")
+    
+    boxes, scores, phrases = detector.detect(image, confidence=box_threshold)
+    
+    logging.info(f"{detector_name} returning {len(boxes)} boxes")
+    return boxes, scores, phrases
+
+
 def int_box_area(box, w, h):
     import logging
 
@@ -819,16 +848,36 @@ def get_som_labeled_img(
     logging.info(f"Image size: w={w}, h={h}")
     if not imgsz:
         imgsz = (h, w)
-    # print('image size:', w, h)
-    xyxy, logits, phrases = predict_yolo(
-        model=model,
-        image=image_source,
-        box_threshold=BOX_TRESHOLD,
-        imgsz=imgsz,
-        scale_img=scale_img,
-        iou_threshold=0.1,
-    )
-    xyxy = xyxy / torch.Tensor([w, h, w, h]).to(xyxy.device)
+    
+    # Check if model is a detector from detector_factory or traditional YOLO
+    from util.detector_factory import BaseDetector
+    
+    if isinstance(model, BaseDetector):
+        # Use detector's .detect() method
+        logging.info(f"Using {model.get_name()} detector")
+        xyxy, logits, phrases = predict_with_detector(
+            detector=model,
+            image=image_source,
+            box_threshold=BOX_TRESHOLD
+        )
+        # Normalize to [0, 1] if boxes found
+        if len(xyxy) > 0:
+            xyxy = xyxy / torch.Tensor([w, h, w, h]).to(xyxy.device)
+        else:
+            logging.warning(f"{model.get_name()} detected 0 boxes")
+    else:
+        # Traditional YOLO path
+        xyxy, logits, phrases = predict_yolo(
+            model=model,
+            image=image_source,
+            box_threshold=BOX_TRESHOLD,
+            imgsz=imgsz,
+            scale_img=scale_img,
+            iou_threshold=0.1,
+        )
+        # Normalize to [0, 1] if boxes found
+        if len(xyxy) > 0:
+            xyxy = xyxy / torch.Tensor([w, h, w, h]).to(xyxy.device)
     image_source = np.asarray(image_source)
     phrases = [str(i) for i in range(len(phrases))]
     logging.debug(f"YOLO predicted {len(xyxy)} boxes")
@@ -878,6 +927,16 @@ def get_som_labeled_img(
     logging.info(
         f"len(filtered_boxes): {len(filtered_boxes)}, starting_idx: {starting_idx}"
     )
+
+    # Handle case where no boxes were detected
+    if len(filtered_boxes) == 0:
+        logging.warning("No boxes detected after filtering, returning empty result")
+        # Return empty annotated image
+        pil_img = Image.fromarray(image_source)
+        buffered = io.BytesIO()
+        pil_img.save(buffered, format="PNG")
+        encoded_image = base64.b64encode(buffered.getvalue()).decode("ascii")
+        return encoded_image, {}, []
 
     # get parsed icon local semantics
     time1 = time.time()

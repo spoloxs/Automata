@@ -32,7 +32,14 @@ async def test_latimes_mini_crossword():
         return
 
     # Initialize MasterAgent with 1 worker for focused reasoning
-    master = MasterAgent(api_key=GEMINI_API_KEY, max_parallel_workers=1)
+    # Disable deep visual analysis to reduce API costs and latency
+    # Use aggressive detection thresholds for better crossword grid detection
+    master = MasterAgent(
+        api_key=GEMINI_API_KEY,
+        max_parallel_workers=1,
+        box_threshold=0.89,  # Very low threshold to detect all grid cells
+        iou_threshold=0.5,     # No overlap suppression for grid cells
+    )
 
     try:
         await master.initialize()

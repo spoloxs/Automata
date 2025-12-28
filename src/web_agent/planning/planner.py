@@ -161,16 +161,27 @@ class Planner:
         
         return plan
 
-    async def _explore_page(self, elements_text: str, max_actions: int = 3) -> list:
+    async def _explore_page(self, elements_text: str, max_actions: int = 15) -> list:
         """
-        LLM-DRIVEN page exploration - Gemini decides how to explore.
-        NO hardcoded scrolling! Gemini can use scroll/click/etc tools.
+        INTELLIGENT page exploration - explores until page is fully understood.
+        
+        Gemini decides how to explore based on:
+        - Page complexity
+        - Element visibility
+        - Semantic completeness
+        
+        Terminates when:
+        - Gemini signals completion (scroll amount=0)
+        - Max actions reached (safety limit)
+        - No meaningful new content discovered
+        
         Returns detailed exploration history for the planner.
         Memory-optimized: explicitly deletes screenshots after parsing.
         """
         exploration_history = []
         
-        log_info("      🔍 Starting LLM-driven page exploration...")
+        log_info("      🔍 Starting intelligent page exploration...")
+        log_info(f"      📊 Max exploration actions: {max_actions} (will stop early if page fully understood)")
         
         # Get current URL for context
         current_url = await self.browser.get_url()
@@ -179,7 +190,11 @@ class Planner:
             f"Starting exploration of: {current_url}"
         )
         
-        # Let Gemini explore the page intelligently (3 exploration actions max)
+        # Track discovered content to detect when exploration is complete
+        previous_element_count = 0
+        no_new_content_count = 0
+        
+        # Let Gemini explore the page intelligently until it's fully understood
         for action_num in range(max_actions):
             log_info(f"      🤖 Exploration action {action_num + 1}/{max_actions}")
             
@@ -196,21 +211,46 @@ class Planner:
             )
             element_count = len(elements)
             
+            # Build element list with CENTER COORDINATES in PIXELS for clicking
+            viewport_size = await self.browser.get_viewport_size()
+            width, height = viewport_size
+            
+            elements_with_coords = []
+            for elem in elements[:50]:  # Show first 50 for exploration
+                try:
+                    if hasattr(elem, 'center') and elem.center:
+                        # Convert normalized coordinates (0-1) to pixels
+                        cx_normalized, cy_normalized = elem.center
+                        cx = int(cx_normalized * width)
+                        cy = int(cy_normalized * height)
+                        
+                        elem_type = getattr(elem, 'type', 'unknown')
+                        content = getattr(elem, 'content', '')
+                        interactivity = getattr(elem, 'interactivity', False)
+                        
+                        elements_with_coords.append(
+                            f"[{elem_type}] \"{content[:30]}\" at ({cx}, {cy}) {'✓clickable' if interactivity else ''}"
+                        )
+                except Exception:
+                    continue
+            
+            elements_summary = "\n".join(elements_with_coords[:30])  # Show top 30
+            
             # Ask Gemini: "How should we explore this page?"
             exploration_prompt = f"""You are INTELLIGENTLY exploring a web page to understand its structure and content.
 
 Current page state:
 - URL: {current_url}
 - Visible elements: {element_count}
-- Elements: {formatted_elements[:1000]}...
 
-INTELLIGENT EXPLORATION STRATEGY:
+TOP ELEMENTS WITH COORDINATES (use these exact x, y values):
+{elements_summary}
 
-Action {action_num + 1} of {max_actions}:
+INTELLIGENT EXPLORATION STRATEGY - Action {action_num + 1} of {max_actions}:
 
 PRIORITY 1: Handle Overlays/Popups FIRST
 - Look for cookie banners, GDPR notices, ad overlays, login prompts
-- Look for "Close", "Accept", "Dismiss", "X" buttons
+- Look for "Close", "Accept", "Dismiss", "Continue", "X" buttons
 - Click to dismiss these BEFORE exploring content
 - Check element descriptions for: "overlay", "modal", "popup", "banner", "consent"
 
@@ -227,10 +267,12 @@ PRIORITY 3: Scroll to Discover More (ONLY if needed)
 PRIORITY 4: Signal Completion
 - scroll(direction="down", amount=0) - Use this when exploration is complete
 
-Available actions:
-- click(x, y) - Dismiss popups, expand sections, reveal content
-- scroll(direction="down/up", amount=500) - Discover content (use AFTER handling popups)
+Available actions (use EXACT coordinates from the list above):
+- click(x=<number>, y=<number>) - Click using exact pixel coordinates shown above
+- scroll(direction="down", amount=500) - Scroll down 500px
 - scroll(direction="down", amount=0) - Signal exploration complete
+
+CRITICAL: Use click(x=123, y=456) with the EXACT coordinates shown in the element list!
 
 Choose ONE action based on current priority. BE SMART - handle popups before scrolling!
 """
@@ -246,11 +288,10 @@ Choose ONE action based on current priority. BE SMART - handle popups before scr
                 viewport_size=await self.browser.get_viewport_size(),
             )
             
-            # Clean up elements
-            del elements, formatted_elements
-            gc.collect()
-            
             if not actions:
+                # Clean up before breaking
+                del elements, formatted_elements
+                gc.collect()
                 exploration_history.append(f"Action {action_num + 1}: No action suggested, stopping exploration")
                 break
             
@@ -277,15 +318,39 @@ Choose ONE action based on current priority. BE SMART - handle popups before scr
                     exploration_history.append(f"Action {action_num + 1}: Scrolled {direction} by {amount}px")
                     
                 elif tool_name == "click":
-                    # BrowserController.click() takes x, y coordinates, not element_id
+                    # Support both element_id and x/y coordinates
+                    element_id = params.get("element_id")
                     x = params.get("x")
                     y = params.get("y")
-                    if x is not None and y is not None:
+                    
+                    if element_id is not None:
+                        # Convert element_id to coordinates
+                        try:
+                            # Find element by ID in our current elements list
+                            target_element = None
+                            for elem in elements:
+                                if elem.id == element_id:
+                                    target_element = elem
+                                    break
+                            
+                            if target_element and hasattr(target_element, 'center'):
+                                # Get center coordinates (already in pixels)
+                                center_x, center_y = target_element.center
+                                await self.browser.click(center_x, center_y)
+                                await asyncio.sleep(0.5)
+                                exploration_history.append(f"Action {action_num + 1}: Clicked element {element_id} at ({center_x:.0f}, {center_y:.0f})")
+                            else:
+                                exploration_history.append(f"Action {action_num + 1}: Click failed - element {element_id} not found or has no center")
+                        except Exception as e:
+                            exploration_history.append(f"Action {action_num + 1}: Click failed - error getting element coordinates: {e}")
+                    
+                    elif x is not None and y is not None:
+                        # Direct x/y coordinates
                         await self.browser.click(x, y)
                         await asyncio.sleep(0.5)
                         exploration_history.append(f"Action {action_num + 1}: Clicked at ({x}, {y})")
                     else:
-                        exploration_history.append(f"Action {action_num + 1}: Click failed - missing x/y coordinates")
+                        exploration_history.append(f"Action {action_num + 1}: Click failed - missing element_id or x/y coordinates")
                     
                 else:
                     exploration_history.append(f"Action {action_num + 1}: Unknown action {tool_name}, skipping")

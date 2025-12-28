@@ -257,13 +257,8 @@ Choose ONE action to resolve the deadlock. Respond in VALID JSON.
                     # Determine completion: prefer explicit verification, otherwise use completed == total
                     completed_flag = False
                     if verification is not None:
-                        # verification may be either a dict or an object; try to interpret both
-                        if isinstance(verification, dict):
-                            completed_flag = bool(verification.get("completed", False))
-                        else:
-                            completed_flag = bool(
-                                getattr(verification, "completed", False)
-                            )
+                        # verification is a VerificationResult dataclass - use attribute access
+                        completed_flag = bool(getattr(verification, "completed", False))
                     else:
                         completed_flag = (
                             execution_state.get("completed") is not None
@@ -409,13 +404,7 @@ Be conservative: prefer false when unsure.
                 try:
                     conf = 0.0
                     if verification is not None:
-                        conf = float(
-                            getattr(
-                                verification,
-                                "confidence",
-                                verification.get("confidence", 0.0),
-                            )
-                        )
+                        conf = float(getattr(verification, "confidence", 0.0))
                 except Exception:
                     conf = 0.0
                 remaining = execution_state.get("total", 1) - execution_state.get(
@@ -430,13 +419,7 @@ Be conservative: prefer false when unsure.
             try:
                 conf = 0.0
                 if verification is not None:
-                    conf = float(
-                        getattr(
-                            verification,
-                            "confidence",
-                            verification.get("confidence", 0.0),
-                        )
-                    )
+                    conf = float(getattr(verification, "confidence", 0.0))
             except Exception:
                 conf = 0.0
             remaining = execution_state.get("total", 1) - execution_state.get(
@@ -902,9 +885,17 @@ CRITICAL RULES:
         
         lines = []
         for i, action in enumerate(actions, 1):
-            action_type = action.get('type', 'unknown')
-            success = action.get('success', False)
-            iteration = action.get('iteration', '?')
+            # Handle both dict and ActionResult object
+            if isinstance(action, dict):
+                action_type = action.get('type', 'unknown')
+                success = action.get('success', False)
+                iteration = action.get('iteration', '?')
+            else:
+                # ActionResult dataclass
+                action_type = getattr(action, 'action_type', 'unknown')
+                success = getattr(action, 'success', False)
+                iteration = getattr(action, 'iteration', '?')
+            
             status = "✓" if success else "✗"
             lines.append(f"  {i}. [{status}] {action_type} (iter {iteration})")
         

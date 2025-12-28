@@ -185,7 +185,13 @@ class BrowserController:
             await self.page.mouse.click(x, y, button=button)
             
             # Wait after click for action to take effect
-            await asyncio.sleep(0.7)
+            if self.page:
+                try:
+                    await self.page.wait_for_timeout(700)
+                except Exception:
+                    await asyncio.sleep(0.7)
+            else:
+                await asyncio.sleep(0.7)
             return True
         except Exception as e:
             log_error(f"❌ Click failed at ({x}, {y}): {e}")
@@ -249,7 +255,13 @@ class BrowserController:
             await self.page.keyboard.type(text, delay=delay)
             
             # Wait after typing for text to be processed
-            await asyncio.sleep(0.5)
+            if self.page:
+                try:
+                    await self.page.wait_for_timeout(500)
+                except Exception:
+                    await asyncio.sleep(0.5)
+            else:
+                await asyncio.sleep(0.5)
             return True
         except Exception as e:
             log_error(f"❌ Type text failed: {e}")
@@ -356,6 +368,82 @@ class BrowserController:
         except Exception:
             return False
 
+    # ==================== Tab Management ====================
+
+    async def get_tabs(self) -> list:
+        """
+        Get all open tabs/pages in the current context.
+        
+        Returns:
+            List of dicts: [{'id': int, 'title': str, 'url': str, 'active': bool}]
+        """
+        if not self.page:
+            return []
+        
+        try:
+            context = self.page.context
+            pages = context.pages
+            
+            tabs = []
+            for i, page in enumerate(pages):
+                try:
+                    title = await page.title()
+                    url = page.url
+                    # Check if this is the currently controlled page
+                    # We compare the Python objects directly
+                    is_active = (page == self.page)
+                    
+                    tabs.append({
+                        "id": i,
+                        "title": title,
+                        "url": url,
+                        "active": is_active
+                    })
+                except Exception as e:
+                    log_warn(f"⚠️ Failed to get info for tab {i}: {e}")
+            
+            return tabs
+        except Exception as e:
+            log_error(f"❌ Failed to get tabs: {e}")
+            return []
+
+    async def switch_to_tab(self, tab_id: int) -> bool:
+        """
+        Switch control to specific tab index.
+        
+        Args:
+            tab_id: Index of the tab (from get_tabs)
+            
+        Returns:
+            True if successful
+        """
+        if not self.page:
+            return False
+            
+        try:
+            context = self.page.context
+            pages = context.pages
+            
+            if 0 <= tab_id < len(pages):
+                target_page = pages[tab_id]
+                
+                # Bring to front in browser
+                await target_page.bring_to_front()
+                
+                # Update controller to control this page
+                self.page = target_page
+                
+                # Wait a bit for focus
+                await asyncio.sleep(0.5)
+                return True
+            else:
+                log_error(f"❌ Invalid tab ID: {tab_id}")
+                return False
+                
+        except Exception as e:
+            log_error(f"❌ Failed to switch tab: {e}")
+            return False
+
     # ==================== DOM Queries ====================
 
     async def query_selector(self, selector: str) -> Optional[any]:
@@ -424,6 +512,50 @@ class BrowserController:
             log_debug(f"   ⚠️ DOM query at ({x}, {y}) failed: {e}")
             return {}
 
+    async def query_dom_batch(self, coordinates: list) -> list:
+        """
+        Batch query DOM elements at multiple pixel coordinates.
+        
+        Args:
+            coordinates: List of (x, y) tuples in pixels
+        
+        Returns:
+            List of dictionaries with DOM information, corresponding to input coordinates.
+        """
+        if not coordinates:
+            return []
+            
+        try:
+            import json
+            coords_json = json.dumps(coordinates)
+            
+            result = await self.page.evaluate(f"""
+                (() => {{
+                    const coords = {coords_json};
+                    return coords.map(([x, y]) => {{
+                        const elem = document.elementFromPoint(x, y);
+                        if (!elem) return {{}};
+                        
+                        return {{
+                            tag: elem.tagName.toLowerCase(),
+                            role: elem.getAttribute('role') || '',
+                            id: elem.id || '',
+                            class: elem.className || '',
+                            text: (elem.innerText || elem.textContent || '').substring(0, 200),
+                            placeholder: elem.placeholder || '',
+                            type: elem.type || '',
+                            name: elem.name || '',
+                            value: elem.value || '',
+                        }};
+                    }});
+                }})();
+            """)
+            
+            return result
+        except Exception as e:
+            log_error(f"❌ Batch DOM query failed: {e}")
+            return [{} for _ in coordinates]
+
     # ==================== Private Helpers ====================
     
     async def _center_on_position(self, x: int, y: int):
@@ -471,8 +603,14 @@ class BrowserController:
     # ==================== Utility ====================
 
     async def wait(self, seconds: float):
-        """Wait for specified seconds"""
-        await asyncio.sleep(seconds)
+        """Wait for specified seconds (smart wait if page is available)"""
+        if self.page:
+            try:
+                await self.page.wait_for_timeout(seconds * 1000)
+            except Exception:
+                await asyncio.sleep(seconds)
+        else:
+            await asyncio.sleep(seconds)
 
     def get_page(self) -> Page:
         """Get underlying Playwright page"""

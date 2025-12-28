@@ -217,7 +217,7 @@ class RedisConversationStore:
         
         if self.redis_client:
             try:
-                await self.redis_client.close()
+                await self.redis_client.aclose()
                 print("✅ Redis connection closed")
             except Exception:
                 pass

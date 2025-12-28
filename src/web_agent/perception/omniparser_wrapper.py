@@ -242,13 +242,22 @@ class OmniParserWrapper:
             "labeled_image": labeled_img,
         }
 
-    def parse_screen_simple(self, image: Image.Image) -> List[Dict]:
+    def parse_screen_simple(
+        self,
+        image: Image.Image,
+        box_threshold: Optional[float] = None,
+        iou_threshold: Optional[float] = None,
+        imgsz: Optional[int] = None,
+    ) -> List[Dict]:
         """
         Simplified parsing that returns only parsed elements as list of dicts.
         OPTIMIZED: Does NOT create base64 annotated image to save 2GB+ RAM.
 
         Args:
             image: PIL Image object
+            box_threshold: Detection confidence threshold (default from config)
+            iou_threshold: IoU threshold for NMS (default from config)
+            imgsz: Image size for model input (default from config)
 
         Returns:
             List of element dicts with structure:
@@ -262,6 +271,11 @@ class OmniParserWrapper:
                 'source': str
             }
         """
+        # Use defaults from config if not provided
+        box_threshold = box_threshold or BOX_THRESHOLD
+        iou_threshold = iou_threshold or IOU_THRESHOLD
+        imgsz = imgsz or OMNIPARSER_IMGSZ
+        
         # CRITICAL FIX: Don't call parse_screen() which creates huge base64 image
         # Instead, call get_som_labeled_img directly and discard image immediately
         
@@ -294,7 +308,7 @@ class OmniParserWrapper:
         dino_labeled_img, _, parsed_content_list = get_som_labeled_img(
             image,
             self.som_model,
-            BOX_TRESHOLD=BOX_THRESHOLD,
+            BOX_TRESHOLD=box_threshold,
             output_coord_in_ratio=True,
             ocr_bbox=ocr_bbox,
             draw_bbox_config=None,  # No drawing = smaller output
@@ -302,8 +316,8 @@ class OmniParserWrapper:
             ocr_text=text,
             # REMOVED: use_local_semantics=True (not in gradio demo!)
             # REMOVED: batch_size=OMNIPARSER_BATCH_SIZE (not in gradio demo!)
-            iou_threshold=IOU_THRESHOLD,
-            imgsz=OMNIPARSER_IMGSZ,
+            iou_threshold=iou_threshold,
+            imgsz=imgsz,
         )
         
         # CRITICAL: Immediately delete the base64 image
@@ -344,7 +358,10 @@ class OmniParserWrapper:
             )
         
         # Delete loop variables to break references
-        del idx, item, bbox, x1, y1, x2, y2, cx, cy, content, element_type
+        try:
+            del idx, item, bbox, x1, y1, x2, y2, cx, cy, content, element_type
+        except UnboundLocalError:
+            pass
         
         # Free parsed_content_list after extracting elements
         del parsed_content_list

@@ -64,6 +64,7 @@ class Element:
 async def enrich_elements_with_dom(elements: List[Element], browser_controller, viewport_size: Tuple[int, int]) -> List[Element]:
     """
     Enrich elements with DOM data by querying at their center coordinates.
+    Optimized to use batch querying.
     
     Args:
         elements: List of Element objects to enrich
@@ -73,42 +74,61 @@ async def enrich_elements_with_dom(elements: List[Element], browser_controller, 
     Returns:
         Same list of elements, enriched with DOM data
     """
-    log_debug(f"   🔍 Enriching {len(elements)} elements with DOM data...")
+    log_debug(f"   🔍 Enriching {len(elements)} elements with DOM data (batch)...")
     
-    enriched_count = 0
+    if not elements:
+        return elements
+
+    # Prepare coordinates for batch query
+    coordinates = []
+    
     for elem in elements:
-        try:
-            # Get pixel coordinates
-            x_px = int(elem.center[0] * viewport_size[0])
-            y_px = int(elem.center[1] * viewport_size[1])
-            
-            # Query DOM at this position
-            dom_info = await browser_controller.query_dom_at_position(x_px, y_px)
-            
+        # Get pixel coordinates
+        x_px = int(elem.center[0] * viewport_size[0])
+        y_px = int(elem.center[1] * viewport_size[1])
+        coordinates.append((x_px, y_px))
+        
+    try:
+        # Check if browser controller supports batch query
+        if hasattr(browser_controller, 'query_dom_batch'):
+            dom_results = await browser_controller.query_dom_batch(coordinates)
+        else:
+            # Fallback to sequential query
+            dom_results = []
+            for x, y in coordinates:
+                dom_results.append(await browser_controller.query_dom_at_position(x, y))
+        
+        enriched_count = 0
+        for i, dom_info in enumerate(dom_results):
             if dom_info:
+                elem = elements[i]
+                
                 # Enrich element with DOM data
                 elem.dom_tag = dom_info.get('tag', '')
                 elem.dom_role = dom_info.get('role', '')
                 elem.dom_id = dom_info.get('id', '')
                 elem.dom_class = dom_info.get('class', '')
-                elem.dom_text = dom_info.get('text', '')[:200]  # Limit to 200 chars
+                elem.dom_text = dom_info.get('text', '')[:200]
                 elem.dom_placeholder = dom_info.get('placeholder', '')
                 enriched_count += 1
-        except Exception as e:
-            log_debug(f"      ⚠️ DOM enrichment failed for element {elem.id}: {e}")
-            continue
-    
-    log_success(f"   ✅ Enriched {enriched_count}/{len(elements)} elements with DOM data")
+                
+        log_success(f"   ✅ Enriched {enriched_count}/{len(elements)} elements with DOM data")
+        
+    except Exception as e:
+        log_warn(f"   ⚠️ Batch DOM enrichment failed: {e}")
+        
     return elements
 
 
 class ScreenParser:
     """High-level interface for screen parsing"""
 
-    def __init__(self, use_cache: bool = True):
+    def __init__(self, use_cache: bool = True, box_threshold: Optional[float] = None, iou_threshold: Optional[float] = None):
         log_debug("ScreenParser.__init__ called")
         self.omniparser = get_omniparser()
         self.use_cache = use_cache
+        self.box_threshold = box_threshold  # Custom detection threshold (None = use default)
+        self.iou_threshold = iou_threshold  # Custom IoU threshold (None = use default)
         
         # Initialize cache if enabled
         if self.use_cache:
@@ -119,6 +139,8 @@ class ScreenParser:
         
         # DIAGNOSTIC: Log instance ID to verify sharing
         log_info(f"📍 ScreenParser instance created: id={id(self)}, omniparser_id={id(self.omniparser)}, cache={'enabled' if self.use_cache else 'disabled'}")
+        if box_threshold is not None or iou_threshold is not None:
+            log_info(f"   🎯 Custom thresholds: box={box_threshold}, iou={iou_threshold}")
 
     def parse(self, screenshot: Image.Image) -> List[Element]:
         log_debug("ScreenParser.parse called")
@@ -139,8 +161,12 @@ class ScreenParser:
             if cached_elements is not None:
                 return cached_elements
         
-        # Cache miss - run OmniParser
-        parsed_elements = self.omniparser.parse_screen_simple(screenshot)
+        # Cache miss - run OmniParser with custom thresholds if provided
+        parsed_elements = self.omniparser.parse_screen_simple(
+            screenshot,
+            box_threshold=self.box_threshold,
+            iou_threshold=self.iou_threshold
+        )
 
         elements = []
         for idx, elem in enumerate(parsed_elements):

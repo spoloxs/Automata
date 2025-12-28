@@ -90,6 +90,16 @@ class WorkerAgent:
         self.gemini_agent = gemini_agent
         self.verifier = verifier
 
+        # Micro-agent coordinator for reduced hallucination
+        from web_agent.execution.micro_agents import MicroAgentCoordinator
+        self.micro_agents = MicroAgentCoordinator(
+            gemini_agent=gemini_agent,
+            action_handler=self.action_handler
+        )
+        
+        # CRITICAL: Connect micro_agents back to action_handler so delegation tools work
+        self.action_handler.micro_agents = self.micro_agents
+
         # Action loop
         # If the master provided conversation instrumentation via parent_context, pick it up
         conv_mgr = None
@@ -151,6 +161,35 @@ class WorkerAgent:
         start_time = time.time()
 
         try:
+            # STEP 0: Check if task is already completed (OPTIMIZATION)
+            # This prevents repeating actions like "dismiss popup" if it's already gone
+            is_already_done, completion_reason = await self._check_if_already_completed()
+            if is_already_done:
+                log_success(f"   ✅ Task {self.task.id[:8]} reported ALREADY COMPLETED: {completion_reason}")
+                end_time = time.time()
+                
+                # Create a verification result for the pre-completed task
+                verification = VerificationResult(
+                    completed=True,
+                    confidence=1.0,
+                    reasoning=f"Pre-check determined task already completed: {completion_reason}",
+                    evidence=["Visual state confirms completion"]
+                )
+                
+                return TaskResult(
+                    task_id=self.task.id,
+                    success=True,
+                    action_history=[],
+                    extracted_data=self.memory.get_all(),
+                    verification=verification,
+                    start_time=start_time,
+                    end_time=end_time,
+                    duration=end_time - start_time,
+                    worker_id=self.worker_id,
+                    worker_thread_id=self.thread_id,
+                    error=None,
+                )
+
             # STEP 1: Check if task matches current screen state
             task_feasible, mismatch_reason = await self._check_task_feasibility()
             
@@ -378,6 +417,86 @@ class WorkerAgent:
 
         return actions
 
+    async def _check_if_already_completed(self) -> tuple[bool, str]:
+        """
+        Check if the task is ALREADY completed on the current screen.
+        
+        Returns:
+            Tuple of (is_completed, reason)
+        """
+        try:
+            # Get current screen state
+            screenshot = await self.browser.capture_screenshot()
+            elements = self.parser.parse(screenshot)
+            url = await self.browser.get_url()
+            
+            # Format for LLM
+            from web_agent.perception.element_formatter import ElementFormatter
+            elements_text = ElementFormatter.format_for_llm(elements)
+            
+            # Ask Gemini if task is ALREADY DONE
+            prompt = f"""You are a task completion analyzer.
+
+TASK TO EXECUTE:
+{self.task.description}
+
+CURRENT SCREEN STATE:
+URL: {url}
+Elements visible: {len(elements)}
+
+ELEMENTS:
+{elements_text[:2000]}
+
+ANALYSIS REQUIRED:
+Has this task ALREADY been completed?
+- If task is "Dismiss popup" and no popup is visible -> YES, completed
+- If task is "Fill email" and email field already has the correct value -> YES, completed
+- If task is "Click Next" and we are already on the next page -> YES, completed
+
+Return JSON:
+{{
+    "completed": true/false,
+    "reason": "Brief explanation"
+}}
+"""
+
+            # Use action_llm for simple text response
+            response = await self.gemini_agent.action_llm.ainvoke([{"role": "user", "content": prompt}])
+            
+            # Parse response
+            import json
+            import re
+            
+            # Try to extract JSON from response
+            content = response.content if hasattr(response, 'content') else str(response)
+            
+            # Look for JSON object
+            json_match = re.search(r'\{[^}]+\}', content, re.DOTALL)
+            if json_match:
+                try:
+                    data = json.loads(json_match.group())
+                    is_completed = bool(data.get('completed', False))
+                    reason = data.get('reason', 'No specific reason provided')
+                    
+                    # Free resources
+                    del screenshot, elements
+                    import gc
+                    gc.collect()
+                    
+                    return is_completed, reason
+                except:
+                    pass
+            
+            # Default to NOT completed if parsing fails
+            del screenshot, elements
+            import gc
+            gc.collect()
+            return False, "Completion check inconclusive"
+            
+        except Exception as e:
+            log_warn(f"   ⚠️ Completion check error: {e}")
+            return False, f"Completion check skipped ({str(e)})"
+
     async def _check_task_feasibility(self) -> tuple[bool, str]:
         """
         Check if the task can be executed on the current screen.
@@ -433,7 +552,15 @@ Return JSON:
     "reason": "Brief explanation"
 }}
 
-**Be liberal - mark feasible unless TRULY impossible. Remember you have navigate, click, scroll, and visual analysis tools!**"""
+**Be liberal - mark feasible unless TRULY impossible.**
+
+CRITICAL GUIDANCE:
+- **Visuals > DOM:** If an element LOOKS like an input field (box shape, next to label) but is described as "static text" or "div", it is likely an interactive custom input or the parser missed the exact tag. **MARK FEASIBLE.**
+- **Coordinates:** If the task target is visible, you can click/type coordinates even if the element ID description is imperfect.
+- **Navigate:** You have navigate, click, scroll, and visual analysis tools. Use them!
+
+**Mark FEASIBLE if there is ANY chance of success.** Only reject if the target is completely missing and cannot be found.
+"""
 
             # Use action_llm for simple text response
             response = await self.gemini_agent.action_llm.ainvoke([{"role": "user", "content": prompt}])
@@ -487,12 +614,23 @@ Return JSON:
         elements = self.parser.parse(screenshot)
         url = await self.browser.get_url()
 
-        # Call verifier
+        # Get action history from global store for verification context
+        from web_agent.storage.action_history_store import get_action_history_store
+        
+        action_history_list = []
+        try:
+            # Get recent actions to provide context to verifier
+            action_history_list = get_action_history_store().get_recent_actions(count=20)
+        except Exception as e:
+            log_debug(f"      ℹ️  Could not get action history for verification: {e}")
+
+        # Call verifier WITH action history context
         verification = await self.verifier.verify_task_completion(
             task=self.task.description,
             url=url,
             elements=elements,
             storage_data=self.memory.get_all(),
+            action_history=action_history_list,  # Pass ActionResult objects directly
             thread_id=self.thread_id,
             screenshot=screenshot,
         )
@@ -588,3 +726,8 @@ Return JSON:
     def get_task(self) -> Task:
         """Get assigned task"""
         return self.task
+    
+    def get_action_history_summary(self, recent: int = 10) -> str:
+        """Get recent action history for this worker"""
+        from web_agent.storage.action_history_store import get_action_history_store
+        return get_action_history_store().to_summary_string(recent=recent)

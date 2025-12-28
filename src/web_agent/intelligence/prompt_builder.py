@@ -84,10 +84,10 @@ Viewport: {viewport_size[0]}x{viewport_size[1]}
 **Important Guidelines:**
 - If the current URL is `about:blank` or does not match the target URL, your first action MUST be to use the 'navigate' tool to go to the correct URL. The user's goal is "{task}". The target URL is likely mentioned in the goal.
 - Only interact with elements that are visible and interactivity=True
-- **Use ELEMENT IDs for interactions**: Each element has an [ID] number - use this for all actions
-- **Click/Type using element_id**: Use click(element_id=X) and type(element_id=X, text="...")
-- Example: If you see [ID:005] ✓ button "Submit", use click(element_id=5, reasoning="Click submit button")
-- **NO COORDINATES NEEDED**: The system automatically converts element IDs to coordinates
+- **Use COORDINATES for interactions**: Each element shows its center position (x, y) in pixels
+- **Click/Type using x, y coordinates**: Use click(x=640, y=360) and type(x=640, y=360, text="...")
+- Example: If you see "Submit button at (640, 360)", use click(x=640, y=360, reasoning="Click submit button")
+- **Use EXACT pixel coordinates** from the element list - don't guess or estimate
 - Break complex actions into simple steps
 - Call mark_task_complete ONLY when task is fully accomplished
 - Be precise and deliberate with each action
@@ -158,24 +158,31 @@ When looking for specific content, explore semantically related areas FIRST:
 3. Use navigate tool if you know the likely URL structure
 4. Use analyze_visual_content if not in obvious semantic locations
 
-**CRITICAL: Working with Element IDs - NO GUESSING**
-- **ONLY use element IDs from the element list** - NEVER guess or make up IDs
-- **Use element_id parameter**: click(element_id=5) NOT click(x=..., y=...)
-- **Element IDs are simple integers**: [ID:000], [ID:005], [ID:042], etc.
-- **System handles coordinates automatically**: You don't need to see or calculate coordinates
-- If an element is off-screen, use scroll() first to bring it into view
-- **If element not in list, use analyze_visual_content** - it will assign temp IDs (9000+)
-- **Visual analysis temp IDs work the same**: click(element_id=9000) for visually found elements
-- **Need coordinates for some reason?** Use get_element_details tool, but this is rarely needed
+**CRITICAL: Tool Selection Strategy**
+
+1. **PREFERRED: Use Two-Phase Actions (identify_and_click / identify_and_type)**
+   - These tools are safest and most robust.
+   - You provide a description (e.g., "Submit button"), and the system finds and clicks it.
+   - Use this when:
+     - You know what you want but coordinates are cluttered
+     - You want to be sure you hit the right thing
+     - Element ID might be unstable
+
+2. **Direct Coordinates (click / type)**
+   - Use ONLY if you see the EXACT element in the "Available Elements" list.
+   - **ONLY use coordinates from the list** - NEVER guess or estimate.
+   - **Use x, y parameters**: click(x=640, y=360) NOT element_id
+   - **Coordinates are in pixels**: (0, 0) is top-left, values shown in element list
+   - **Use EXACT coordinates**: Don't round or approximate - use what's shown
 
 **Preventing Hallucination & Ensuring Accuracy:**
-- ❌ NEVER guess element IDs - only use IDs you see in the element list
+- ❌ NEVER guess coordinates - only use coordinates you see in the element list
 - ❌ NEVER skip elements - if you got 10 cells, interact with all 10
-- ❌ NEVER make up IDs - use analyze_visual_content if element not in list
-- ✅ ALWAYS verify element ID exists before interacting
+- ❌ NEVER make up coordinates - use analyze_visual_content if element not in list
+- ✅ ALWAYS verify coordinates exist before interacting
 - ✅ ALWAYS use ALL elements returned from visual analysis
-- ✅ ALWAYS use element_id parameter: click(element_id=5) NOT coordinates
-- If visual analysis returns temp IDs 9000-9010, interact with ALL using those exact IDs
+- ✅ ALWAYS use x, y parameters: click(x=640, y=360) NOT element_id
+- If visual analysis returns 10 elements with coordinates, interact with ALL using those exact coordinates
 
 **Using Your Memory (store_data tool):**
 - **Actively use store_data** to remember important things YOU discover
@@ -212,7 +219,7 @@ What action(s) should you take next?"""
         """
         action_summary = "\n".join(
             [
-                f"- {action.get('action_type', 'unknown')}: {action.get('success', False)}"
+                f"- {action.action_type}: {action.success}"
                 for action in action_history[-10:]  # Last 10 actions
             ]
         )
@@ -291,24 +298,6 @@ Return a JSON object with:
             else "No exploration yet"
         )
         
-        # Include visual insights if available
-        visual_section = ""
-        if visual_insights:
-            visual_section = f"""
-**DEEP VISUAL ANALYSIS (Gemini Vision):**
-The AI has performed visual analysis of the page with {visual_insights.get('confidence', 0):.1%} confidence:
-
-{visual_insights.get('answer', 'No visual analysis available')}
-
-This provides context about:
-- Hidden or visual elements not in the element list (grids, games, puzzles)
-- Page structure and workflow
-- Loading states, ads, or temporary overlays
-- Possible interactions beyond the parsed elements
-
-USE THIS to create more accurate plans that account for visual-only elements!
-"""
-
         # Include accomplishment history to prevent repetition
         accomplishment_section = ""
         if accomplishment_summary:
@@ -325,7 +314,14 @@ The following actions have already been completed successfully. DO NOT repeat th
 - If stuck repeating, try a different approach
 """
 
-        prompt_template = """You are a TASK PLANNING AGENT for a web automation system. Your job is to create a plan for the NEXT PHASE of work based on what is CURRENTLY VISIBLE on the page.
+        prompt_template = """You are a TASK PLANNING AGENT for a web automation system. Your job is to create a CONCRETE, SPECIFIC plan for the NEXT PHASE of work based on what is CURRENTLY VISIBLE on the page.
+
+        ⚠️  **CRITICAL: RESPECT EXPLORATION HISTORY** ⚠️
+        - Review the **Exploration Summary** carefully.
+        - Actions listed there have **ALREADY BEEN PERFORMED** (e.g., dismissing popups, clicking buttons).
+        - **DO NOT** create steps for actions that were already successful in the exploration phase.
+        - If the exploration summary says "Dismissed cookie popup", do NOT plan to dismiss it again.
+        - If exploration failed to do something, ONLY THEN should you plan to try it again (perhaps differently).
 
         ⚠️  **CRITICAL: ITERATIVE PLANNING PHILOSOPHY** ⚠️
         
@@ -334,7 +330,7 @@ The following actions have already been completed successfully. DO NOT repeat th
         - DO NOT plan for future pages, hidden elements, or content that doesn't exist yet
         - After your plan completes, the system will AUTOMATICALLY REPLAN based on the new page state
         - Think "What can I do NOW?" not "What's the complete solution?"
-        - Keep plans SHORT (1-5 steps typically) and focused on visible next actions
+        - Keep plans SHORT (2-7 steps typically) and focused on visible next actions
         
         **Example:**
         - Goal: "Play the Contexto game and find the secret word"
@@ -342,6 +338,21 @@ The following actions have already been completed successfully. DO NOT repeat th
         - ❌ BAD: Plan 50 steps to solve the entire game
         - ✅ GOOD: Plan to (1) type first guess, (2) submit, (3) observe feedback
         - After those 3 steps, the system will REPLAN based on what feedback appears!
+
+        ⚠️  **CRITICAL: NO VAGUE TASKS - BE SPECIFIC** ⚠️
+        
+        - EVERY task must reference SPECIFIC, VISIBLE elements from the Available Elements list
+        - NEVER create tasks for things you can't find in the current page state
+        - If something isn't visible now, create a task to FIND it first (scroll, navigate, search)
+        - Use EXACT element descriptions from the list
+        
+        **Bad vs Good task examples:**
+        - ❌ BAD: "Navigate to the crossword section" (how? where is it?)
+        - ✅ GOOD: "Click the 'Games' link in the top navigation menu at coordinates [X, Y]"
+        - ❌ BAD: "Play the game" (which game? how?)
+        - ✅ GOOD: "Click the 'Start Game' button visible in the center panel"
+        - ❌ BAD: "Find the video player" (not a task, no action)
+        - ✅ GOOD: "Scroll down to reveal more content and locate video elements"
 
         You DO NOT execute actions yourself. You ONLY design the plan for the CURRENT phase.
 
@@ -387,17 +398,17 @@ The following actions have already been completed successfully. DO NOT repeat th
            - Good: "Confirm that a result list appears containing at least one item."
            - Avoid vague goals like "Understand the page better".
 
-        3. **Grounded in current UI - CRITICAL ELEMENT VERIFICATION**
-           - **BEFORE creating a task that references an element, VERIFY it exists in Available Elements list!**
-           - Describe elements using EXACT text/content from the element list
-           - Include element's location/context for clarity
-           - **NEVER reference specific element IDs** - use descriptions instead
+        3. **Grounded in current UI - DESCRIPTIVE ONLY**
+           - **NEVER use Element IDs (e.g., [12]) or Coordinates in the plan steps.**
+           - Elements change IDs and positions constantly. Your plan must be robust to these changes.
+           - Describe elements by their **visual properties, text labels, and context**.
+           - The Worker Agent will resolve the specific ID/coordinate at runtime.
            
            Examples:
            - ✅ GOOD: "Click the 'Submit' button visible in the form area"
-           - ✅ GOOD: "Type into the input field with placeholder 'Enter email'"
-           - ❌ BAD: "Click the submit button" (doesn't verify it exists)
-           - ❌ BAD: "Click element 42" (uses element ID)
+           - ✅ GOOD: "Type into the input field next to the 'Email' label"
+           - ❌ BAD: "Click element [12]" (IDs change!)
+           - ❌ BAD: "Click at (500, 300)" (Coordinates change!)
            
            **If an element you need is NOT in the Available Elements list:**
            - Create a task to scroll/explore to find it

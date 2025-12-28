@@ -1,15 +1,15 @@
 # AI Web Automation Agent
 
-A sophisticated multi-agent web automation system powered by **Google Gemini 2.5 Pro**, featuring visual perception via OmniParser, intelligent task planning, and self-supervised execution.
+A sophisticated multi-agent web automation system powered by **Google Gemini 2.5 Pro**, featuring visual perception via OmniParser, intelligent task planning, and autonomous self-supervised execution.
 
 ## Features
 
 - **Multi-Agent Architecture** - Supervisor coordinates isolated worker agents to prevent token limit issues
-- **Visual Perception** - OmniParser(using Qwen2-VL and easyocr) for accurate element detection without relying on DOM selectors
+- **Visual Perception** - OmniParser (using Qwen2-VL and EasyOCR) for accurate element detection without relying on DOM selectors
 - **AI-Driven Planning** - Gemini decomposes complex goals into executable task DAGs
 - **Self-Verification** - Agents verify their own task completion with confidence scoring
 - **Adaptive Replanning** - Automatic recovery from failures with AI-driven decision making
-- **Persistent Memory** - Workers share accomplishments to avoid redundant work
+- **Persistent Memory** - Workers share accomplishments across tasks to avoid redundant work
 - **Type Safety** - LangChain + Pydantic for structured outputs
 
 ## Table of Contents
@@ -162,26 +162,28 @@ Return ExecutionResult
 - Parallel execution: Up to 4x workers → 2-3x speedup
 - Early feasibility: Saves 5-10 wasted iterations per mismatch
 
-## 💻 System Requirements
+## System Requirements
 
 ### Hardware Requirements
 
 | Component | Minimum | Recommended |
 |-----------|---------|-------------|
 | **RAM** | 8 GB | 16+ GB |
-| **GPU** | None (CPU inference) | NVIDIA GPU (6GB+ VRAM) for faster OmniParser |
-| **Storage** | 8+ GB free |
+| **GPU** | None (CPU inference) | NVIDIA GPU with 6GB+ VRAM for faster OmniParser |
+| **Storage** | 8+ GB free space | 16+ GB free space |
 
-## 📦 Installation
+## Installation
 
-### 1. Clone Repository
+### 1. Clone the Repository
 
 ```bash
 git clone https://github.com/spoloxs/automata.git
-cd web-agent
+cd automata/web-agent
 ```
 
-### 2. Create Virtual Environment
+### 2. Create a Virtual Environment
+
+It's recommended to use a virtual environment to avoid dependency conflicts.
 
 ```bash
 python3 -m venv venv
@@ -203,7 +205,7 @@ playwright install chromium
 
 ### 5. Setup OmniParser Weights
 
-**IMPORTANT**: This project includes a **customized OmniParser** implementation in the `OmniParser/` directory. Do NOT use the original Microsoft OmniParser - use the included version.
+**IMPORTANT**: This project includes a **customized OmniParser** implementation in the `OmniParser/` directory. Do **NOT** use the original Microsoft OmniParser repository - always use the included version which has been optimized for this project.
 
 Download the required pre-trained model weights:
 
@@ -214,11 +216,11 @@ cd OmniParser/weights
 # Download icon detection model
 wget https://huggingface.co/microsoft/OmniParser/resolve/main/icon_detect/model.safetensors -P icon_detect/
 
-# Download caption model (choose one based on your preference if not using qwen or easyocr for ocr):
-# Option 1: Florence (recommended)
+# Download caption model (choose one based on your preference if not using Qwen or EasyOCR for OCR):
+# Option 1: Florence (recommended for better accuracy)
 wget https://huggingface.co/microsoft/OmniParser/resolve/main/icon_caption_florence/model.safetensors -P icon_caption_florence/
 
-# Option 2: BLIP2 (alternative)
+# Option 2: BLIP2 (lighter alternative)
 wget https://huggingface.co/microsoft/OmniParser/resolve/main/icon_caption_blip2/model.safetensors -P icon_caption_blip2/
 ```
 
@@ -242,29 +244,36 @@ Edit `.env` and add your **Gemini API key**:
 ```env
 GEMINI_API_KEY=your_gemini_api_key_here
 ```
-Other things may not work from env I am still fixing it.
+
+**Note**: Some environment variables are still being migrated to use `.env` configuration. Most settings can be found in [src/web_agent/config/settings.py](src/web_agent/config/settings.py).
 
 **Get Gemini API Key**: https://aistudio.google.com/app/apikey
 
 ### 7. Install and Start Redis
 
-Redis is used for persistent conversation storage:
+Redis is used for persistent conversation storage and caching:
 
+**Ubuntu/Debian:**
 ```bash
-# Ubuntu/Debian
 sudo apt-get install redis-server
 sudo systemctl start redis-server
 sudo systemctl enable redis-server
+```
 
-# macOS
+**macOS:**
+```bash
 brew install redis
 brew services start redis
+```
 
-# Windows (WSL2)
+**Windows (WSL2):**
+```bash
 sudo apt-get install redis-server
 sudo service redis-server start
+```
 
-# Verify Redis is running
+**Verify Redis is running:**
+```bash
 redis-cli ping  # Should return "PONG"
 ```
 
@@ -286,22 +295,23 @@ import asyncio
 from web_agent.core.master_agent import MasterAgent
 
 async def main():
-    # Initialize master agent
+    # Initialize the master agent
     master = MasterAgent(max_parallel_workers=2)
     await master.initialize()
-    
-    # Execute goal
-    result = await master.execute_goal(
-        goal="Search for 'Python asyncio tutorial' and click the first result",
-        starting_url="https://www.google.com"
-    )
-    
-    # Check results
-    print(f"Success: {result.success}")
-    print(f"Tasks completed: {result.completed_tasks}/{result.total_tasks}")
-    
-    # Cleanup
-    await master.cleanup()
+
+    try:
+        # Execute the automation goal
+        result = await master.execute_goal(
+            goal="Search for 'Python asyncio tutorial' and click the first result",
+            starting_url="https://www.google.com"
+        )
+
+        # Check results
+        print(f"Success: {result.success}")
+        print(f"Tasks completed: {result.completed_tasks}/{result.total_tasks}")
+    finally:
+        # Always cleanup resources
+        await master.cleanup()
 
 if __name__ == "__main__":
     asyncio.run(main())
@@ -608,13 +618,15 @@ The following improvements are currently under development:
 - **Crossword puzzles** - Specialized handling for iframe-based games and puzzles
 
 ### Vision System Improvements
-- **Removing deep visual analysis fallback** - Currently, when OmniParser can't detect elements, the system falls back to Gemini vision API (sends full screenshots). This is being removed in favor of:
-  - Better OmniParser tuning
-  - DOM-based fallback strategies
-  - Hybrid detection methods that don't require extra API calls
+- **Optimizing visual analysis** - Currently, when OmniParser can't detect elements, the system falls back to Gemini Vision API (sends full screenshots). Future improvements include:
+  - Better OmniParser tuning and configuration
+  - Enhanced DOM-based fallback strategies
+  - Hybrid detection methods to reduce API calls
+  - Improved element detection for complex UIs
 
 ### Planned Features
-- Improved error recovery strategies
-- Better handling of dynamic content
-- Enhanced multi-page workflows
-- Faster plan optimization
+- Enhanced error recovery strategies with smarter retry logic
+- Better handling of dynamic content and lazy-loaded elements
+- Multi-page workflow optimization
+- Faster plan generation and optimization
+- Support for additional LLM providers (Claude, GPT-4, etc.)

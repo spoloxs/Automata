@@ -42,7 +42,7 @@ class HealthMonitor:
         self.start_time = None
         self.task_history = []
         self.last_progress_time = None
-        self.stuck_threshold = 60  # seconds without progress
+        self.stuck_threshold = 120  # seconds without progress (increased for slow tasks)
 
     def start_monitoring(self):
         """Start monitoring execution"""

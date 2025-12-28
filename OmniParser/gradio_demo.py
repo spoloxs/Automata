@@ -14,15 +14,28 @@ from util.utils import (
     get_yolo_model,
     get_caption_model_processor,
     get_som_labeled_img,
+    predict_with_detector,
 )
+from util.detector_factory import get_detector, list_available_detectors
 import torch
 from PIL import Image
 
-yolo_model = get_yolo_model(model_path="weights/icon_detect/model.pt")
+# Load default YOLO model - Using newly trained UI detector
+yolo_model = get_yolo_model(model_path="../../runs/ui_yolo/ui_detector/weights/best.pt")
 caption_model_processor = get_caption_model_processor(
     "qwen2vl", "Qwen/Qwen2-VL-2B-Instruct"
 )
-# caption_model_processor = get_caption_model_processor(model_name="blip2", model_name_or_path="weights/icon_caption_blip2")
+
+# Cache for loaded detectors
+detector_cache = {
+    "yolo": None,
+    "yolo_grid": None,
+    "rtdetr": None,
+    "detr": None,
+    "owlvit": None,
+    "table_transformer": None,
+    "pix2struct": None,
+}
 
 MARKDOWN = """
 # OmniParser for Pure Vision Based General GUI Agent 🔥
@@ -38,11 +51,59 @@ OmniParser is a screen parsing tool to convert general GUI screen to structured 
 DEVICE = torch.device("cuda")
 
 
+def get_or_load_detector(detector_type):
+    """Load detector on demand and cache it"""
+    global detector_cache
+    
+    if detector_cache[detector_type] is None:
+        log_info(f"Loading {detector_type} detector...")
+        
+        if detector_type == "yolo":
+            detector_cache[detector_type] = get_detector(
+                "yolo",
+                model_path="../../runs/ui_yolo/ui_detector/weights/best.pt"
+            )
+        elif detector_type == "yolo_grid":
+            detector_cache[detector_type] = get_detector(
+                "yolo_grid",
+                model_path="runs/yolo_mega/grid_detector_mega/weights/best.pt"
+            )
+        elif detector_type == "rtdetr":
+            detector_cache[detector_type] = get_detector(
+                "rtdetr",
+                model_path="rtdetr-l.pt"  # Downloads automatically
+            )
+        elif detector_type == "detr":
+            detector_cache[detector_type] = get_detector(
+                "detr",
+                model_name="facebook/detr-resnet-50"
+            )
+        elif detector_type == "owlvit":
+            detector_cache[detector_type] = get_detector(
+                "owlvit",
+                model_name="google/owlvit-base-patch32"
+            )
+        elif detector_type == "table_transformer":
+            detector_cache[detector_type] = get_detector(
+                "table_transformer",
+                model_name="microsoft/table-transformer-structure-recognition"
+            )
+        elif detector_type == "pix2struct":
+            detector_cache[detector_type] = get_detector(
+                "pix2struct",
+                model_name="google/pix2struct-base"
+            )
+        
+        log_info(f"{detector_type} detector loaded!")
+    
+    return detector_cache[detector_type]
+
+
 # @spaces.GPU
 # @torch.inference_mode()
 # @torch.autocast(device_type="cuda", dtype=torch.bfloat16)
 def process(
-    image_input, box_threshold, iou_threshold, use_paddleocr, imgsz
+    image_input, detector_type, box_threshold, iou_threshold, use_paddleocr, imgsz
 ) -> Optional[Image.Image]:
     box_overlay_ratio = image_input.size[0] / 3200
     draw_bbox_config = {
@@ -51,8 +112,10 @@ def process(
         "text_padding": max(int(3 * box_overlay_ratio), 1),
         "thickness": max(int(3 * box_overlay_ratio), 1),
     }
-    # import pdb; pdb.set_trace()
-
+    
+    log_info(f"Processing with detector: {detector_type}")
+    
+    # Load OCR
     ocr_bbox_rslt, is_goal_filtered = check_ocr_box(
         image_input,
         display_img=False,
@@ -62,9 +125,18 @@ def process(
         use_paddleocr=use_paddleocr,
     )
     text, ocr_bbox = ocr_bbox_rslt
+    
+    # Use selected detector or default YOLO
+    if detector_type == "yolo":
+        # Use traditional YOLO path
+        model_to_use = yolo_model
+    else:
+        # Load alternative detector
+        model_to_use = get_or_load_detector(detector_type)
+    
     dino_labled_img, label_coordinates, parsed_content_list = get_som_labeled_img(
         image_input,
-        yolo_model,
+        model_to_use,
         BOX_TRESHOLD=box_threshold,
         output_coord_in_ratio=True,
         ocr_bbox=ocr_bbox,
@@ -75,11 +147,10 @@ def process(
         imgsz=imgsz,
     )
     image = Image.open(io.BytesIO(base64.b64decode(dino_labled_img)))
-    log_info("finish processing")
+    log_info(f"Finished processing with {detector_type}")
     parsed_content_list = "\n".join(
         [f"icon {i}: " + str(v) for i, v in enumerate(parsed_content_list)]
     )
-    # parsed_content_list = str(parsed_content_list)
     return image, str(parsed_content_list)
 
 
@@ -88,6 +159,15 @@ with gr.Blocks() as demo:
     with gr.Row():
         with gr.Column():
             image_input_component = gr.Image(type="pil", label="Upload image")
+            
+            # 🆕 Detector selection dropdown
+            detector_component = gr.Dropdown(
+                choices=["yolo", "yolo_grid", "rtdetr", "detr", "owlvit", "table_transformer"],
+                value="yolo",
+                label="Detection Model",
+                info="YOLO: Fast UI | YOLO Grid: 🎯 Crossword grids | RT-DETR: ⭐ BEST for grids/small objects | DETR: Transformer | OWL-ViT: Text-guided | Table Transformer: Grid cells"
+            )
+            
             # set the threshold for removing the bounding boxes with low confidence, default is 0.05
             box_threshold_component = gr.Slider(
                 label="Box Threshold", minimum=0.01, maximum=1.0, step=0.01, value=0.05
@@ -115,6 +195,7 @@ with gr.Blocks() as demo:
         fn=process,
         inputs=[
             image_input_component,
+            detector_component,  # 🆕 Added detector selector
             box_threshold_component,
             iou_threshold_component,
             use_paddleocr_component,

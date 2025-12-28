@@ -3,7 +3,69 @@ Tool definitions for Gemini function calling.
 Defines all browser actions as callable tools.
 """
 
+# Micro-Agent Delegation Tools (Reduced Hallucination)
+MICRO_AGENT_TOOLS = [
+    {
+        "name": "identify_and_type",
+        "description": "TWO-PHASE ACTION: First identifies element matching description, then types into it. Reduces hallucination by separating identification from execution. Use when you want to type into something but aren't sure of the exact element ID.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "description": {
+                    "type": "string",
+                    "description": "Description of element to type into (e.g., 'Email input field', 'Search box', 'Password field')"
+                },
+                "text": {
+                    "type": "string",
+                    "description": "Text to type once element is identified"
+                },
+                "context": {
+                    "type": "string",
+                    "description": "Optional context about why you need this element"
+                },
+                "reasoning": {
+                    "type": "string",
+                    "description": "Why you're using two-phase type instead of direct type"
+                }
+            },
+            "required": ["description", "text", "reasoning"]
+        }
+    }
+]
+
 BROWSER_TOOLS = [
+    {
+        "name": "get_tabs",
+        "description": "Get a list of all open browser tabs/pages. Returns IDs, titles, and URLs. Use this to see what pages are open.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "reasoning": {
+                    "type": "string",
+                    "description": "Why you need to list tabs"
+                }
+            },
+            "required": ["reasoning"]
+        }
+    },
+    {
+        "name": "switch_tab",
+        "description": "Switch focus to a specific browser tab. Use get_tabs first to find the ID.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "tab_id": {
+                    "type": "integer",
+                    "description": "The ID of the tab to switch to (from get_tabs)"
+                },
+                "reasoning": {
+                    "type": "string",
+                    "description": "Why you are switching to this tab"
+                }
+            },
+            "required": ["tab_id", "reasoning"]
+        }
+    },
     {
         "name": "get_element_details",
         "description": "Get full details for specific element IDs including coordinates, bbox, dimensions, colors, DOM info. Use this if you need precise positioning information.",
@@ -25,31 +87,39 @@ BROWSER_TOOLS = [
     },
     {
         "name": "click",
-        "description": "Click an element by ID. Much simpler than using coordinates!",
+        "description": "Click at specific pixel coordinates on the page. Use the CENTER coordinates shown in the element list.",
         "parameters": {
             "type": "object",
             "properties": {
-                "element_id": {
+                "x": {
                     "type": "integer",
-                    "description": "The ID of the element to click (from the element list)"
+                    "description": "X coordinate in pixels (from CENTER in element list)"
+                },
+                "y": {
+                    "type": "integer",
+                    "description": "Y coordinate in pixels (from CENTER in element list)"
                 },
                 "reasoning": {
                     "type": "string",
-                    "description": "Why you are clicking this element"
+                    "description": "Why you are clicking at this location"
                 }
             },
-            "required": ["element_id", "reasoning"]
+            "required": ["x", "y", "reasoning"]
         }
     },
     {
         "name": "type",
-        "description": "Type text into an element by ID. Much simpler than using coordinates!",
+        "description": "Type text at specific pixel coordinates (targeting an input field). Use the CENTER coordinates shown in the element list.",
         "parameters": {
             "type": "object",
             "properties": {
-                "element_id": {
+                "x": {
                     "type": "integer",
-                    "description": "The ID of the element to type into (must be an input/textarea)"
+                    "description": "X coordinate in pixels (from CENTER in element list)"
+                },
+                "y": {
+                    "type": "integer",
+                    "description": "Y coordinate in pixels (from CENTER in element list)"
                 },
                 "text": {
                     "type": "string",
@@ -60,7 +130,7 @@ BROWSER_TOOLS = [
                     "description": "Why you are typing this text"
                 }
             },
-            "required": ["element_id", "text", "reasoning"]
+            "required": ["x", "y", "text", "reasoning"]
         }
     },
     {
@@ -135,24 +205,6 @@ BROWSER_TOOLS = [
                 }
             },
             "required": ["seconds", "reasoning"]
-        }
-    },
-    {
-        "name": "analyze_visual_content",
-        "description": "Deep visual analysis using Gemini Vision API to understand complex page layouts and find elements. Note: This is SLOW (5-10 seconds) and has API costs. Consider checking the element list, scrolling, and using get_element_details first - most elements are already there! Best used for: complex visual patterns (game grids, tables), overlays not in element list, or when you've thoroughly checked available elements and genuinely need visual understanding.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "question": {
-                    "type": "string",
-                    "description": "Comprehensive question about visual content. Ask for everything you need in ONE call for efficiency (e.g., 'Find ALL interactive elements: buttons, grid cells, input fields with coordinates')"
-                },
-                "reasoning": {
-                    "type": "string",
-                    "description": "Explain what you need visual analysis for and why the element list isn't sufficient. This helps optimize tool usage."
-                }
-            },
-            "required": ["question", "reasoning"]
         }
     },
     {
@@ -272,9 +324,20 @@ PLANNING_TOOLS = [
 ]
 
 
-def get_browser_tools():
-    """Get browser action tools"""
-    return BROWSER_TOOLS
+def get_browser_tools(enable_micro_agents: bool = True):
+    """
+    Get browser action tools
+    
+    Args:
+        enable_micro_agents: If True, includes micro-agent delegation tools
+    """
+    tools = list(BROWSER_TOOLS)  # Make a copy
+    
+    # Add micro-agent tools if enabled
+    if enable_micro_agents:
+        tools = MICRO_AGENT_TOOLS + tools
+    
+    return tools
 
 
 def get_planning_tools():

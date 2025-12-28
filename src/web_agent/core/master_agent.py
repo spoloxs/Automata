@@ -5,6 +5,7 @@ Decomposes goals, spawns workers, aggregates results.
 
 import time
 import uuid
+import threading
 from typing import Any, Dict, Optional
 
 from web_agent.config.settings import GEMINI_API_KEY
@@ -40,31 +41,34 @@ class MasterAgent:
     """
     
     _instance: Optional['MasterAgent'] = None
-    _instance_lock = False  # Simple lock to prevent race conditions
+    _lock = threading.Lock()
 
     def __new__(cls, *args, **kwargs):
         """Singleton pattern: Only allow one MasterAgent instance at a time."""
-        if cls._instance is not None and not cls._instance_lock:
-            log_warn(f"⚠️  MasterAgent singleton already exists (id: {cls._instance.master_id})")
-            log_warn(f"⚠️  Returning existing instance. Call cleanup() before creating a new one.")
-            return cls._instance
-        
-        instance = super().__new__(cls)
-        cls._instance = instance
-        return instance
+        with cls._lock:
+            if cls._instance is not None:
+                log_warn(f"⚠️  MasterAgent singleton already exists (id: {cls._instance.master_id})")
+                log_warn(f"⚠️  Returning existing instance. Call cleanup() before creating a new one.")
+                return cls._instance
+            
+            instance = super().__new__(cls)
+            cls._instance = instance
+            return instance
 
     @classmethod
     def reset_singleton(cls):
         """Reset singleton instance (for testing purposes only)."""
         log_warn("🔄 Resetting MasterAgent singleton (testing mode)")
-        cls._instance = None
-        cls._instance_lock = False
+        with cls._lock:
+            cls._instance = None
 
     def __init__(
         self,
         api_key: Optional[str] = GEMINI_API_KEY,
         browser_page=None,
         max_parallel_workers: int = 4,
+        box_threshold: Optional[float] = 0.89,  # Optimized default based on testing
+        iou_threshold: Optional[float] = 0.5,   # Optimized default based on testing
     ):
         # Skip re-initialization if already initialized
         if hasattr(self, '_initialized') and self._initialized:
@@ -76,12 +80,17 @@ class MasterAgent:
         self.api_key = api_key
         self.max_workers = max_parallel_workers
         self.browser = BrowserController(page=browser_page)
-        self.parser = ScreenParser()
+        self.parser = ScreenParser(
+            box_threshold=box_threshold,
+            iou_threshold=iou_threshold
+        )
         # Conversation store and manager to preserve planner/supervisor decision context
         # Use Redis for memory-efficient storage
         self.conversation_store = RedisConversationStore()
         self.conversation_manager = ConversationManager(self.conversation_store)
-        self.gemini = GeminiAgent(api_key=str(api_key) if api_key is not None else "")
+        self.gemini = GeminiAgent(
+            api_key=str(api_key) if api_key is not None else ""
+        )
         # Attach conversation manager to gemini so decision helpers can access conversation context
         try:
             # Use setattr to avoid static attribute checks on GeminiAgent
@@ -291,10 +300,21 @@ class MasterAgent:
             log_info("\n🔍 STEP 5: Final Verification")
             final_verification = await self._verify_final_goal(goal)
             execution_result.verification = final_verification
-            execution_result.success = (
-                bool(getattr(final_verification, "completed", False))
-                and execution_result.confidence >= 0.5
-            )
+            
+            # Trust final verification if it's confident, even if task accounting was messy
+            is_verified = bool(getattr(final_verification, "completed", False))
+            verification_conf = float(getattr(final_verification, "confidence", 0.0))
+            
+            if is_verified and verification_conf > 0.8:
+                # Strong verification overrides task tracking
+                execution_result.success = True
+                log_success(f"   ✅ Success confirmed by strong verification ({verification_conf:.1%}) despite task stats")
+            else:
+                # Fallback to combination of verification and task progress
+                execution_result.success = (
+                    is_verified
+                    and execution_result.confidence >= 0.5
+                )
 
             # Ask the decision engine whether to continue. The decision engine (AI)
             # controls whether another supervised execution pass should run.
@@ -424,11 +444,9 @@ class MasterAgent:
                     except Exception:
                         conversation_context = None
 
-                    # Decide whether to continue: prefer supervisor decision_engine if available
+                    # Decide whether to continue: prefer supervisor if available
                     try:
-                        if supervisor is not None and getattr(
-                            supervisor, "decision_engine", None
-                        ):
+                        if supervisor is not None:
                             # Build a robust verification payload for the decision call
                             verification_payload = None
                             try:
@@ -472,7 +490,7 @@ class MasterAgent:
                                 verification_payload = None
 
                             should_continue = (
-                                await supervisor.decision_engine.should_continue(
+                                await supervisor.should_continue(
                                     execution_state_for_decision,
                                     verification_payload,
                                     conversation_context,
@@ -486,31 +504,10 @@ class MasterAgent:
                             conf = 0.0
                             try:
                                 if final_verification is not None:
-                                    if isinstance(final_verification, dict):
-                                        conf = float(
-                                            final_verification.get("confidence", 0.0)
-                                        )
-                                    elif hasattr(final_verification, "to_dict"):
-                                        try:
-                                            conf = float(
-                                                final_verification.to_dict().get(
-                                                    "confidence", 0.0
-                                                )
-                                            )
-                                        except Exception:
-                                            conf = float(
-                                                getattr(
-                                                    final_verification,
-                                                    "confidence",
-                                                    0.0,
-                                                )
-                                            )
-                                    else:
-                                        conf = float(
-                                            getattr(
-                                                final_verification, "confidence", 0.0
-                                            )
-                                        )
+                                    # final_verification is a VerificationResult dataclass - use attribute access
+                                    conf = float(getattr(final_verification, "confidence", 0.0))
+                                else:
+                                    conf = 0.0
                             except Exception:
                                 conf = 0.0
                             should_continue = bool(conf < 0.9 and remaining > 0)

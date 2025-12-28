@@ -15,17 +15,19 @@ Design goals:
 """
 
 import asyncio
+import json
 import time
 import uuid
 from dataclasses import asdict, dataclass, field
 from typing import Any, Dict, List, Optional
+
+from pydantic import BaseModel, Field
 
 from web_agent.core.result import TaskResult
 from web_agent.core.task import Task, TaskStatus
 from web_agent.core.worker_agent import WorkerAgent
 from web_agent.scheduling.scheduler import WorkerScheduler
 from web_agent.supervision.decision_engine import (
-    DecisionEngine,
     SupervisorAction,
     SupervisorDecision,
 )
@@ -48,6 +50,35 @@ class SupervisionResult:
     final_state: Dict
     stop_reason: Optional[str] = None
     final_state_extra: Dict[str, Any] = field(default_factory=dict)
+
+
+# Pydantic models for decision-making (formerly in DecisionEngine)
+class DecisionRequest(BaseModel):
+    """Input to decision engine"""
+
+    goal: str
+    failed_task: Dict
+    execution_state: Dict
+    downstream_tasks: List[Dict]
+    failure_pattern: str
+    current_url: str
+
+
+class DecisionResponse(BaseModel):
+    """Expected response from LLM"""
+
+    action: SupervisorAction = Field(..., description="Chosen action")
+    reasoning: str = Field(..., description="Detailed reasoning")
+    confidence: float = Field(..., ge=0.0, le=1.0, description="Confidence in decision")
+    task_id: Optional[str] = Field(None, description="Task ID to retry/skip")
+    alternative: Optional[str] = Field(None, description="Backup plan")
+    simplify_plan: Optional[bool] = Field(False, description="Simplify remaining tasks")
+    suggested_continuation_attempts: Optional[int] = Field(
+        None, description="Suggested number of additional supervised execution attempts"
+    )
+    new_tasks: Optional[List[Dict]] = Field(
+        None, description="List of new tasks to add to current DAG"
+    )
 
 
 class AISupervisorAgent:
@@ -78,9 +109,11 @@ class AISupervisorAgent:
         self.max_retries = max_retries
         self.screen_parser = screen_parser  # Store shared parser
 
-        # Decision engine
-        self.decision_engine = DecisionEngine(gemini_agent)
+        # Health monitor (decision engine methods now integrated into supervisor)
         self.health_monitor = HealthMonitor()
+        
+        # Supervisor thread ID for structured LLM calls
+        self.supervisor_thread_id_for_decisions = "supervisor_decision_engine"
 
         # Configuration
         self.supervision_interval = supervision_interval
@@ -381,9 +414,11 @@ class AISupervisorAgent:
                         log_error(f"   ❌ Error marking task completed: {e}")
                 else:
                     try:
-                        dag.mark_task_failed(task.id, result.error or "Unknown error")
+                        # Ensure error message is never None
+                        error_message = result.error or "Task failed without error message"
+                        dag.mark_task_failed(task.id, error_message)
                         self.consecutive_failures += 1
-                        log_error(f"   ❌ Task {task.id[:8]} failed: {result.error}")
+                        log_error(f"   ❌ Task {task.id[:8]} failed: {error_message}")
 
                         # FULLY AI-DRIVEN FAILURE HANDLING:
                         # Always consult the decision engine on failures, providing execution state
@@ -434,33 +469,53 @@ class AISupervisorAgent:
     async def _execute_task_with_recovery(
         self, task: Task, browser_page, verifier
     ) -> TaskResult:
-        """Execute task with automatic retry + timeout"""
-
-        # Single execution attempt without supervisor-level timeout; delegate recovery to AI decisions
+        """
+        Execute task using PlannerAgent (which spawns workers).
+        
+        New Architecture:
+        - Supervisor spawns PlannerAgent for each DAG task
+        - PlannerAgent breaks down task and spawns WorkerAgents
+        - Workers report back to PlannerAgent
+        - PlannerAgent verifies completion and reports to Supervisor
+        """
         try:
-            worker = WorkerAgent(
-                worker_id=f"worker_{task.id[:8]}_sup0",
+            # Import PlannerAgent
+            from web_agent.core.planner_agent import PlannerAgent
+            
+            # Build execution history summary for planner context
+            execution_summary = self._get_execution_summary_for_worker()
+            
+            # Create PlannerAgent for this task
+            planner = PlannerAgent(
+                planner_id=f"planner_{task.id[:8]}_sup0",
                 task=task,
                 browser_page=browser_page,
                 gemini_agent=self.gemini_agent,
                 verifier=verifier,
+                screen_parser=self.screen_parser,  # CRITICAL: Share parser!
                 parent_context={
                     "supervisor_mode": True,
                     "supervisor_thread": self.supervisor_thread_id,
+                    "execution_history": execution_summary,
+                    "execution_context": {
+                        "goal": getattr(self, "current_goal", ""),
+                        "completed_tasks": self.executed_task_count,
+                        "total_tasks": len(getattr(self, "current_dag", [])) if hasattr(self, "current_dag") else 0,
+                    },
                 },
                 accomplishment_store=self.accomplishment_store,
-                screen_parser=self.screen_parser,  # CRITICAL: Share parser!
             )
 
-            result = await worker.execute_task()
-            await worker.cleanup()
+            # PlannerAgent will spawn workers and manage execution
+            result = await planner.execute_task()
+            await planner.cleanup()
             return result
 
         except Exception as e:
             log_error(f"   💥 Task {task.id[:8]} exception: {e}")
-            if "worker" in locals():
+            if "planner" in locals():
                 try:
-                    await worker.cleanup()
+                    await planner.cleanup()
                 except Exception:
                     pass
             return TaskResult(
@@ -481,7 +536,7 @@ class AISupervisorAgent:
 
         state = self._capture_execution_state(goal, dag)
 
-        decision = await self.decision_engine.decide_failure_action(
+        decision = await self.decide_failure_action(
             goal=goal,
             failed_task={
                 "id": failed_task.id,
@@ -499,6 +554,12 @@ class AISupervisorAgent:
                 "current_url": getattr(result, "current_url", "unknown"),
             },
         )
+
+        # CRITICAL FIX: Ensure RETRY decisions always have task_id
+        # If LLM returned RETRY but forgot to include task_id, populate it
+        if decision.action == SupervisorAction.RETRY and not decision.task_id:
+            decision.task_id = failed_task.id
+            log_debug(f"   🔧 Auto-populated missing task_id for RETRY decision: {failed_task.id[:8]}")
 
         # keep in local decision list for final result reporting
         self.decisions_made.append(decision)
@@ -537,7 +598,7 @@ class AISupervisorAgent:
             log_warn(f"   🏥 Health concerns: {', '.join(health.concerns)}")
             
             # Use decision engine to determine recovery action
-            decision = await self.decision_engine.decide_failure_action(
+            decision = await self.decide_failure_action(
                 goal=goal,
                 failed_task={
                     "id": "health_intervention",
@@ -563,7 +624,7 @@ class AISupervisorAgent:
     async def _handle_deadlock(self, goal: str, dag) -> SupervisorDecision:
         """Handle execution deadlock with AI (and record decision)."""
         state = self._capture_execution_state(goal, dag)
-        decision = await self.decision_engine.decide_deadlock_resolution(
+        decision = await self.decide_deadlock_resolution(
             goal=goal,
             blocked_tasks=dag.get_incomplete_tasks(),
             dag_state={"ready_tasks": len(dag.get_ready_tasks())},
@@ -1130,6 +1191,339 @@ class AISupervisorAgent:
                 )
         except Exception:
             log_debug("   ℹ️ Failed to append decision to conversation (ignored)")
+
+    # -------------------------
+    # Decision Engine Methods (formerly DecisionEngine class)
+    # -------------------------
+    async def decide_failure_action(
+        self, goal: str, failed_task: Dict, execution_state: Dict, dag_state: Dict
+    ) -> SupervisorDecision:
+        """Decide what to do when a task fails."""
+        # Normalize execution state to a stable schema for LLM prompts
+        normalized_state = self._normalize_execution_state(execution_state)
+        request = DecisionRequest(
+            goal=goal,
+            failed_task=failed_task,
+            execution_state=normalized_state,
+            downstream_tasks=dag_state.get("downstream_tasks", []),
+            failure_pattern=dag_state.get("failure_pattern", "unknown"),
+            current_url=dag_state.get("current_url", ""),
+        )
+
+        # Get AI decision
+        decision = await self._call_decision_llm(request)
+
+        print(f"\n🧠 AI Decision: {decision.action.value}")
+        print(f"   Confidence: {decision.confidence:.1%}")
+        print(f"   Reasoning: {decision.reasoning[:100]}...")
+
+        return SupervisorDecision(
+            action=decision.action,
+            reasoning=decision.reasoning,
+            confidence=decision.confidence,
+            task_id=decision.task_id,
+            alternative=decision.alternative,
+            new_tasks=getattr(decision, "new_tasks", None),
+        )
+
+    async def decide_deadlock_resolution(
+        self, goal: str, blocked_tasks: List[Dict], dag_state: Dict
+    ) -> SupervisorDecision:
+        """Decide how to resolve execution deadlock."""
+        prompt = self._build_deadlock_prompt(goal, blocked_tasks, dag_state)
+        response = await self.gemini_agent.action_llm.ainvoke(
+            [{"role": "user", "content": prompt}]
+        )
+        return self._parse_decision_response(response.content)
+
+    async def should_continue(
+        self,
+        execution_state: Dict,
+        verification: Optional[Dict] = None,
+        conversation_context: Optional[Dict] = None,
+    ) -> bool:
+        """Decide whether the master should continue running supervised execution passes."""
+        try:
+            # Prefer LangChain structured output if GeminiAgent exposes it
+            if hasattr(self.gemini_agent, "continuation_llm"):
+                conv_summary = ""
+                conv_events = ""
+                if conversation_context and isinstance(conversation_context, dict):
+                    conv_summary = conversation_context.get("summary", "") or ""
+                    recent = conversation_context.get("recent_messages", []) or []
+                    lines = []
+                    for m in recent[-10:]:
+                        role = m.get("role", "event")
+                        content = m.get("content", "")
+                        snippet = content.replace("\n", " ")
+                        if len(snippet) > 300:
+                            snippet = snippet[:297] + "..."
+                        lines.append(f"[{role}] {snippet}")
+                    conv_events = "\n".join(lines)
+
+                prompt = (
+                    "You are an AI Supervisor Decision Engine.\n\n"
+                    "Given the execution state, the verifier assessment, and a short conversation summary\n"
+                    "with recent events, return a structured response indicating whether the master should\n"
+                    "run another supervised execution pass.\n\n"
+                    f"Execution state: {execution_state}\n\nVerification: {verification}\n\n"
+                    f"Conversation summary: {conv_summary}\n\nRecent events:\n{conv_events}\n\n"
+                )
+                result = await self.gemini_agent.continuation_llm.ainvoke(prompt)
+                return bool(getattr(result, "should_continue", False))
+
+            # Fallback heuristic
+            try:
+                conf = 0.0
+                if verification is not None:
+                    conf = float(getattr(verification, "confidence", 0.0))
+            except Exception:
+                conf = 0.0
+            remaining = execution_state.get("total", 1) - execution_state.get("completed", 0)
+            return bool(conf < 0.95 and remaining > 0)
+
+        except Exception:
+            return False
+
+    async def _call_decision_llm(self, request: DecisionRequest) -> DecisionResponse:
+        """Call the structured decision LLM and return a validated DecisionResponse."""
+        from web_agent.core.error_types import ErrorClassifier
+        
+        failed_task_dict = request.failed_task if isinstance(request.failed_task, dict) else {}
+        error_message = failed_task_dict.get("error", "")
+        
+        # Extract progress metrics from recent history
+        progress_metrics_dict = None
+        recent_history = request.execution_state.get('raw', {}).get('recent_history', [])
+        if recent_history:
+            last_run = recent_history[-1]
+            result = last_run.get('result', {})
+            extracted_data = result.get('extracted_data', {})
+            progress_metrics_dict = extracted_data.get('progress_metrics')
+        
+        # Classify the error using structured system
+        structured_error = ErrorClassifier.classify(error_message, progress_metrics_dict)
+        
+        # Build detailed progress information
+        progress_info = ""
+        if structured_error.progress_metrics:
+            metrics = structured_error.progress_metrics
+            progress_info = f"""
+STRUCTURED ERROR ANALYSIS:
+Error Category: {structured_error.category.value}
+{f"Timeout Reason: {structured_error.timeout_reason.value}" if structured_error.timeout_reason else ""}
+Suggested Action: {structured_error.suggested_action}
+Is Recoverable: {structured_error.is_recoverable}
+
+DETAILED PROGRESS METRICS:
+- Actions executed: {metrics.actions_executed}
+- Successful actions: {metrics.successful_actions} 
+- Failed actions: {metrics.failed_actions}
+- Success rate: {metrics.success_rate:.1%}
+- State changes: {metrics.state_changes}
+- Has meaningful progress: {metrics.has_meaningful_progress}
+
+Recent Actions Pattern:
+{self._format_action_pattern(metrics.last_10_actions)}
+
+RECOMMENDATION:
+{self._generate_recommendation(structured_error)}
+"""
+
+        prompt = f"""You are an AI Supervisor Decision Engine for web automation.
+
+GOAL: {request.goal}
+
+FAILED TASK:
+{self._format_failed_task(request.failed_task)}
+{progress_info}
+
+EXECUTION STATE:
+- Progress: {request.execution_state.get('completed', 0)} / {request.execution_state.get('total', 0)}
+- Failed: {request.execution_state.get('failed', 0)}
+
+DECISION REQUIRED:
+Choose ONE action and return a structured response.
+
+RULES:
+- RETRY: First failure, temporary issue
+- SKIP: Non-critical verification
+- REPLAN: Task made progress but needs continuation
+- ABORT: Goal unreachable
+"""
+
+        messages = [
+            {"role": "system", "content": "You are a production-grade AI supervisor for web automation."},
+            {"role": "user", "content": prompt},
+        ]
+
+        try:
+            if hasattr(self.gemini_agent, "decision_llm"):
+                result = await self.gemini_agent.decision_llm.ainvoke(messages)
+                action_str = getattr(result, "action", None)
+                try:
+                    action_enum = SupervisorAction(action_str)
+                except Exception:
+                    action_enum = SupervisorAction.SKIP
+
+                return DecisionResponse(
+                    action=action_enum,
+                    reasoning=getattr(result, "reasoning", ""),
+                    confidence=float(getattr(result, "confidence", 0.0)),
+                    task_id=getattr(result, "task_id", None),
+                    alternative=getattr(result, "alternative", None),
+                    new_tasks=getattr(result, "new_tasks", None),
+                )
+        except Exception as e:
+            print(f"⚠️  Decision engine fallback: {e}")
+            return DecisionResponse(
+                action=SupervisorAction.SKIP,
+                reasoning="Decision engine error - defaulting to skip",
+                confidence=0.5,
+            )
+
+    def _normalize_execution_state(self, state: Dict) -> Dict:
+        """Normalize execution_state to a stable schema."""
+        if not isinstance(state, dict):
+            state = {}
+        normalized = dict(state)
+        
+        def to_int(val, default=0):
+            if isinstance(val, int):
+                return val
+            try:
+                if val is None:
+                    return default
+                if isinstance(val, (list, tuple, set, dict)):
+                    return len(val)
+                return int(val)
+            except Exception:
+                return default
+
+        normalized["completed"] = to_int(state.get("completed", 0), 0)
+        normalized["failed"] = to_int(state.get("failed", 0), 0)
+        normalized["total"] = to_int(state.get("total", 0), 0)
+        
+        try:
+            normalized["elapsed_time"] = float(state.get("elapsed_time", 0) or 0.0)
+        except Exception:
+            normalized["elapsed_time"] = 0.0
+
+        try:
+            normalized["raw"] = dict(state)
+        except Exception:
+            normalized["raw"] = {"state": state}
+
+        return normalized
+
+    def _build_deadlock_prompt(self, goal: str, blocked_tasks: List[Dict], dag_state: Dict) -> str:
+        """Builds the prompt for resolving a deadlock."""
+        task_list = "\n".join([f"  - {task.id}: {task.description}" for task in blocked_tasks[:5]])
+        return f"""You are an AI Supervisor responsible for unblocking execution.
+
+**SITUATION:** Execution is DEADLOCKED. No tasks can run.
+
+**GOAL:** {goal}
+
+**BLOCKED TASKS:**
+{task_list}
+
+**DECISION REQUIRED:**
+Choose ONE action to resolve the deadlock. Respond in VALID JSON.
+"""
+
+    def _format_failed_task(self, task: Dict) -> str:
+        """Format failed task info"""
+        return f"""Description: {task.get('description', 'N/A')}
+Error: {task.get('error', 'Unknown')}
+Duration: {task.get('duration', 0):.1f}s
+"""
+
+    def _format_action_pattern(self, actions: List[Dict[str, Any]]) -> str:
+        """Format action pattern analysis"""
+        if not actions:
+            return "No actions recorded"
+        lines = []
+        for i, action in enumerate(actions, 1):
+            action_type = action.get('type', 'unknown')
+            success = action.get('success', False)
+            status = "✓" if success else "✗"
+            lines.append(f"  {i}. [{status}] {action_type}")
+        return "\n".join(lines) if lines else "No pattern detected"
+    
+    def _generate_recommendation(self, structured_error) -> str:
+        """Generate structured recommendation based on error analysis"""
+        from web_agent.core.error_types import ErrorCategory
+        
+        if structured_error.category == ErrorCategory.TIMEOUT:
+            if structured_error.progress_metrics and structured_error.progress_metrics.has_meaningful_progress:
+                return "This is an ITERATIVE TASK making measurable progress. Recommend REPLAN with continuation task."
+            else:
+                return "Task timed out without progress. Recommend SKIP or RETRY based on criticality."
+        elif structured_error.is_recoverable:
+            return f"Error is recoverable. Suggested action: {structured_error.suggested_action.upper()}"
+        else:
+            return "Unrecoverable error - recommend ABORT."
+    
+    def _parse_decision_response(self, content: Any) -> SupervisorDecision:
+        """Parse structured decision response or fallback JSON content."""
+        try:
+            if not isinstance(content, str) and hasattr(content, "action"):
+                action_val = getattr(content, "action", None)
+                try:
+                    action_enum = SupervisorAction(action_val)
+                except Exception:
+                    action_enum = SupervisorAction.SKIP
+                return SupervisorDecision(
+                    action=action_enum,
+                    reasoning=getattr(content, "reasoning", ""),
+                    confidence=float(getattr(content, "confidence", 0.0)),
+                )
+            data = json.loads(content) if isinstance(content, str) else dict(content)
+            try:
+                action_enum = SupervisorAction(data.get("action"))
+            except Exception:
+                action_enum = SupervisorAction.SKIP
+            return SupervisorDecision(
+                action=action_enum,
+                reasoning=data.get("reasoning", ""),
+                confidence=float(data.get("confidence", 0.0)),
+            )
+        except Exception:
+            return SupervisorDecision(
+                action=SupervisorAction.SKIP,
+                reasoning="Parse error - default skip",
+                confidence=0.3,
+            )
+
+    def _get_execution_summary_for_worker(self) -> Dict[str, Any]:
+        """
+        Build a compact execution history summary for worker context.
+        Workers need to know what was already attempted to avoid repeating failed actions.
+        """
+        try:
+            # Get last 5 task executions for context
+            recent_tasks = []
+            for entry in self.execution_history[-5:]:
+                try:
+                    recent_tasks.append({
+                        "task": entry.get("task_desc", ""),
+                        "success": entry.get("success", False),
+                        "error": entry.get("error", ""),
+                        "actions_count": entry.get("actions_count", 0),
+                    })
+                except Exception:
+                    continue
+            
+            return {
+                "completed_count": self.executed_task_count,
+                "recent_tasks": recent_tasks,
+                "decisions_made": len(self.decisions_made),
+                "health_status": self.health_monitor.get_health(getattr(self, "current_dag", None)).status if hasattr(self, "current_dag") else "UNKNOWN",
+            }
+        except Exception as e:
+            log_debug(f"   ℹ️  Could not build execution summary: {e}")
+            return {"completed_count": self.executed_task_count}
 
     # -------------------------
     # Cleanup and finalization

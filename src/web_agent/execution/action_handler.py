@@ -13,6 +13,11 @@ from web_agent.execution.browser_controller import BrowserController
 from web_agent.perception.screen_parser import Element
 from web_agent.storage.worker_memory import WorkerMemory
 from web_agent.storage.accomplishment_store import AccomplishmentStore, AccomplishmentType
+from web_agent.storage.action_history_store import (
+    get_action_history_store,
+    ActionOutcome,
+    PageContext,
+)
 from web_agent.util.logger import log_debug, log_error, log_info, log_success, log_warn
 
 
@@ -25,12 +30,17 @@ class ActionType(Enum):
     NAVIGATE = "navigate"
     SCROLL = "scroll"
     WAIT = "wait"
-    ANALYZE_VISUAL = "analyze_visual"
     STORE_DATA = "store_data"
     GET_ACCOMPLISHMENTS = "get_accomplishments"
     GET_ELEMENT_DETAILS = "get_element_details"
     SCROLL_TO_RESULT = "scroll_to_result"
     MARK_COMPLETE = "mark_complete"
+    # Tab management
+    GET_TABS = "get_tabs"
+    SWITCH_TAB = "switch_tab"
+    # Micro-agent delegation actions
+    IDENTIFY_AND_CLICK = "identify_and_click"
+    IDENTIFY_AND_TYPE = "identify_and_type"
 
 
 @dataclass
@@ -51,12 +61,17 @@ class BrowserAction:
             "navigate": ActionType.NAVIGATE,
             "scroll": ActionType.SCROLL,
             "wait": ActionType.WAIT,
-            "analyze_visual_content": ActionType.ANALYZE_VISUAL,
             "store_data": ActionType.STORE_DATA,
             "get_accomplishments": ActionType.GET_ACCOMPLISHMENTS,
             "get_element_details": ActionType.GET_ELEMENT_DETAILS,
             "scroll_to_result": ActionType.SCROLL_TO_RESULT,
             "mark_task_complete": ActionType.MARK_COMPLETE,
+            # Tab management
+            "get_tabs": ActionType.GET_TABS,
+            "switch_tab": ActionType.SWITCH_TAB,
+            # Micro-agent delegation
+            "identify_and_click": ActionType.IDENTIFY_AND_CLICK,
+            "identify_and_type": ActionType.IDENTIFY_AND_TYPE,
         }
 
         action_type = action_type_map.get(tool_name)
@@ -123,6 +138,19 @@ class ActionHandler:
         """
         start_time = time.time()
 
+        # NEW: Capture "before" context for action history
+        try:
+            before_url = await self.browser.get_url()
+            before_elements_count = len(self.current_elements)
+            before_context = PageContext(
+                url=before_url,
+                elements_count=before_elements_count,
+                viewport_size=self.viewport_size
+            )
+        except Exception:
+            before_context = None
+            before_url = "unknown"
+
         try:
             # Route to appropriate handler
             handler_map = {
@@ -132,12 +160,17 @@ class ActionHandler:
                 ActionType.NAVIGATE: self._handle_navigate,
                 ActionType.SCROLL: self._handle_scroll,
                 ActionType.WAIT: self._handle_wait,
-                ActionType.ANALYZE_VISUAL: self._handle_analyze_visual,
                 ActionType.STORE_DATA: self._handle_store_data,
                 ActionType.GET_ACCOMPLISHMENTS: self._handle_get_accomplishments,
                 ActionType.GET_ELEMENT_DETAILS: self._handle_get_element_details,
                 ActionType.SCROLL_TO_RESULT: self._handle_scroll_to_result,
                 ActionType.MARK_COMPLETE: self._handle_mark_complete,
+                # Tab management
+                ActionType.GET_TABS: self._handle_get_tabs,
+                ActionType.SWITCH_TAB: self._handle_switch_tab,
+                # Micro-agent delegation handlers
+                ActionType.IDENTIFY_AND_CLICK: self._handle_identify_and_click,
+                ActionType.IDENTIFY_AND_TYPE: self._handle_identify_and_type,
             }
 
             handler = handler_map.get(action.action_type)
@@ -152,9 +185,48 @@ class ActionHandler:
             # Execute handler
             success, error, metadata = await handler(action.parameters, elements)
 
-            # Record successful accomplishments
-            if success and self.accomplishments:
-                await self._record_accomplishment(action, metadata)
+            # Record ALL accomplishments (success AND failure) for agent learning
+            if self.accomplishments:
+                await self._record_accomplishment(action, metadata, success, error)
+
+            # NEW: Record action outcome to history store
+            try:
+                after_url = await self.browser.get_url()
+                after_elements_count = len(elements) if elements else 0
+                after_context = PageContext(
+                    url=after_url,
+                    elements_count=after_elements_count,
+                    viewport_size=self.viewport_size
+                )
+                
+                # Detect what changed
+                changes_observed = []
+                url_changed = False
+                if before_url != after_url:
+                    changes_observed.append(f"URL changed to {after_url}")
+                    url_changed = True
+                
+                # Build outcome
+                outcome = ActionOutcome(
+                    action_type=action.action_type.value,
+                    target=str(action.parameters.get("element_id", action.parameters.get("url", ""))),
+                    parameters=action.parameters,
+                    success=success,
+                    error=error,
+                    before_context=before_context,
+                    after_context=after_context,
+                    changes_observed=changes_observed,
+                    url_changed=url_changed,
+                    expected_outcome=action.reasoning,
+                    actual_outcome="Success" if success else (error or "Failed"),
+                    outcome_matched=success,
+                    duration_ms=int((time.time() - start_time) * 1000)
+                )
+                
+                # Record it
+                get_action_history_store().record_action(outcome)
+            except Exception as e:
+                log_debug(f"Failed to record action history: {e}")
 
             return ActionResult(
                 action_type=action.action_type.value,
@@ -330,110 +402,6 @@ class ActionHandler:
 
         return True, None, {"seconds": seconds}
 
-    async def _handle_analyze_visual(
-        self, params: Dict, elements: list
-    ) -> Tuple[bool, Optional[str], Optional[Dict]]:
-        """Handle visual analysis request - IMMEDIATELY executes and returns results"""
-        question = params.get("question", "")
-        reasoning = params.get("reasoning", "")
-        context = params.get("context")
-
-        log_info(f"   🔍 Visual analysis requested: {question}")
-        log_info(f"   💭 Reasoning: {reasoning}")
-
-        try:
-            # Capture screenshot
-            screenshot = await self.browser.capture_screenshot()
-            
-            # Execute visual analysis IMMEDIATELY and await result
-            log_info(f"   🤖 Calling Gemini Vision API...")
-            result = await self.gemini.analyze_visual(
-                screenshot=screenshot,
-                question=question,
-                context=context
-            )
-            
-            # Free screenshot immediately
-            del screenshot
-            
-            log_success(f"   ✅ Visual analysis complete!")
-            log_info(f"   📝 Answer: {result['answer'][:200]}")
-            
-            if result.get("target_element_id"):
-                log_info(f"   🎯 Found element ID: {result['target_element_id']}")
-            if result.get("target_coordinates"):
-                log_info(f"   📍 Coordinates: {result['target_coordinates']}")
-            
-            # NEW: Assign temp IDs to visually found elements
-            if result.get("all_elements"):
-                found_elements = result["all_elements"]
-                temp_elements = []
-                
-                # Get viewport size for coordinate normalization
-                viewport_width, viewport_height = self.viewport_size
-                
-                for idx, elem in enumerate(found_elements):
-                    temp_id = 9000 + idx  # Start from 9000 to avoid conflicts
-                    
-                    # Get coordinates from element
-                    center_coords = elem.get("center_coordinates", [viewport_width/2, viewport_height/2])
-                    bbox_coords = elem.get("bbox", [0, 0, viewport_width, viewport_height])
-                    
-                    # CRITICAL: Gemini Vision returns PIXEL coordinates (not normalized)
-                    # The visual_analysis_prompt explicitly asks for pixel values
-                    # So we store pixels directly and calculate normalized versions
-                    center_pixels = center_coords  # Already in pixels
-                    bbox_pixels = bbox_coords  # Already in pixels
-                    
-                    # Calculate normalized versions (0-1 range) from pixels
-                    center_normalized = [
-                        center_coords[0] / viewport_width,
-                        center_coords[1] / viewport_height
-                    ]
-                    
-                    bbox_normalized = [
-                        bbox_coords[0] / viewport_width if len(bbox_coords) > 0 else 0,
-                        bbox_coords[1] / viewport_height if len(bbox_coords) > 1 else 0,
-                        bbox_coords[2] / viewport_width if len(bbox_coords) > 2 else 1,
-                        bbox_coords[3] / viewport_height if len(bbox_coords) > 3 else 1,
-                    ] if len(bbox_coords) >= 4 else [0, 0, 1, 1]
-                    
-                    # Store visual element with temp ID
-                    self.visual_elements[temp_id] = {
-                        "center_pixels": center_pixels,
-                        "bbox_pixels": bbox_pixels,
-                        "center_normalized": center_normalized,
-                        "bbox_normalized": bbox_normalized,
-                        "description": elem.get("description", ""),
-                        "type": elem.get("element_type", "unknown"),
-                        "content": elem.get("content", ""),
-                    }
-                    
-                    # Add temp_id to element
-                    elem["temp_id"] = temp_id
-                    temp_elements.append(elem)
-                
-                result["visual_elements"] = temp_elements
-                result["note"] = f"Found {len(temp_elements)} elements with IDs 9000-{9000 + len(temp_elements) - 1}. These visual elements are now available in the element list for clicking/typing via their IDs."
-                
-                log_info(f"   🆔 Assigned {len(temp_elements)} visual elements with temp IDs 9000-{9000 + len(temp_elements) - 1}")
-                log_info(f"   📍 Visual elements are now merged into element list for interaction")
-            
-            # Return the actual analysis result
-            return True, None, result
-            
-        except Exception as e:
-            log_error(f"   ❌ Visual analysis failed: {e}")
-            import traceback
-            traceback.print_exc()
-            
-            return False, f"Visual analysis error: {str(e)}", {
-                "answer": f"Error: {str(e)}",
-                "target_element_id": None,
-                "target_coordinates": None,
-                "confidence": 0.0
-            }
-
     async def _handle_store_data(
         self, params: Dict, elements: list
     ) -> Tuple[bool, Optional[str], Optional[Dict]]:
@@ -550,18 +518,134 @@ class ActionHandler:
 
         return True, None, {"reasoning": reasoning}
 
+    # ==================== Tab Management Handlers ====================
+
+    async def _handle_get_tabs(
+        self, params: Dict, elements: list
+    ) -> Tuple[bool, Optional[str], Optional[Dict]]:
+        """Handle request for tab list"""
+        log_info(f"   📑 Retrieving open tabs")
+        tabs = await self.browser.get_tabs()
+        
+        # Format for output
+        tab_list_str = "\n".join([
+            f"[{t['id']}] {'(ACTIVE) ' if t['active'] else ''}{t['title']} - {t['url']}"
+            for t in tabs
+        ])
+        
+        if not tabs:
+            tab_list_str = "No open tabs found (or failed to retrieve)"
+            
+        log_info(f"      Found {len(tabs)} tabs")
+        
+        # Store in memory
+        self.memory.store("open_tabs", tabs)
+        
+        return True, None, {"tabs": tabs, "summary": tab_list_str}
+
+    async def _handle_switch_tab(
+        self, params: Dict, elements: list
+    ) -> Tuple[bool, Optional[str], Optional[Dict]]:
+        """Handle switch tab"""
+        tab_id = params.get("tab_id")
+        reasoning = params.get("reasoning", "")
+        
+        if tab_id is None:
+            return False, "Missing tab_id parameter", None
+            
+        log_info(f"   📑 Switching to tab {tab_id}: {reasoning}")
+        success = await self.browser.switch_to_tab(int(tab_id))
+        
+        if success:
+            log_success(f"   ✅ Switched to tab {tab_id}")
+            return True, None, {"tab_id": tab_id}
+        else:
+            log_error(f"   ❌ Failed to switch to tab {tab_id}")
+            return False, f"Failed to switch to tab {tab_id}", None
+
+    # ==================== Micro-Agent Delegation Handlers ====================
+
+    async def _handle_identify_and_click(
+        self, params: Dict, elements: list
+    ) -> Tuple[bool, Optional[str], Optional[Dict]]:
+        """
+        Handle two-phase click: identify element by description, then click it.
+        Reduces hallucination by separating identification from execution.
+        """
+        description = params.get("description", "")
+        context = params.get("context", "")
+        reasoning = params.get("reasoning", "")
+        
+        log_info(f"   🎯 Two-phase click: {description}")
+        log_debug(f"      Reasoning: {reasoning}")
+        
+        # Get micro-agent coordinator from worker
+        # Note: This will be set by worker when it initializes action_handler
+        if not hasattr(self, 'micro_agents'):
+            log_warn("   ⚠️  Micro-agents not available, falling back to visual analysis")
+            return False, "Micro-agents not initialized", None
+        
+        try:
+            # Delegate to micro-agent coordinator
+            result = await self.micro_agents.click_element_by_description(
+                description=description,
+                elements=elements or self.current_elements,
+                context=context
+            )
+            
+            if result.success:
+                log_success(f"   ✅ Two-phase click succeeded")
+                return True, None, result.data
+            else:
+                log_error(f"   ❌ Two-phase click failed: {result.error}")
+                return False, result.error, None
+                
+        except Exception as e:
+            log_error(f"   ❌ Two-phase click error: {e}")
+            return False, str(e), None
+
+    async def _handle_identify_and_type(
+        self, params: Dict, elements: list
+    ) -> Tuple[bool, Optional[str], Optional[Dict]]:
+        """
+        Handle two-phase type: identify element by description, then type into it.
+        Reduces hallucination by separating identification from execution.
+        """
+        description = params.get("description", "")
+        text = params.get("text", "")
+        context = params.get("context", "")
+        reasoning = params.get("reasoning", "")
+        
+        log_info(f"   🎯 Two-phase type: {description}")
+        log_debug(f"      Text: '{text}'")
+        log_debug(f"      Reasoning: {reasoning}")
+        
+        # Get micro-agent coordinator from worker
+        if not hasattr(self, 'micro_agents'):
+            log_warn("   ⚠️  Micro-agents not available")
+            return False, "Micro-agents not initialized", None
+        
+        try:
+            # Delegate to micro-agent coordinator
+            result = await self.micro_agents.type_into_element_by_description(
+                description=description,
+                text=text,
+                elements=elements or self.current_elements,
+                context=context
+            )
+            
+            if result.success:
+                log_success(f"   ✅ Two-phase type succeeded")
+                return True, None, result.data
+            else:
+                log_error(f"   ❌ Two-phase type failed: {result.error}")
+                return False, result.error, None
+                
+        except Exception as e:
+            log_error(f"   ❌ Two-phase type error: {e}")
+            return False, str(e), None
+
     # ==================== Utilities ====================
-
-    def _find_element(self, element_id: int, elements: list) -> Optional[Element]:
-        """Find element by ID in elements list"""
-        if not elements:
-            return None
-
-        for elem in elements:
-            if elem.id == element_id:
-                return elem
-
-        return None
 
     def is_task_complete(self) -> bool:
         """Check if task has been marked complete"""
@@ -571,10 +655,11 @@ class ActionHandler:
         """Reset task complete flag"""
         self.task_complete = False
     
-    async def _record_accomplishment(self, action: BrowserAction, metadata: Optional[Dict]) -> None:
+    async def _record_accomplishment(self, action: BrowserAction, metadata: Optional[Dict], success: bool, error: Optional[str]) -> None:
         """
-        Record a successful action as an accomplishment.
-        Only records significant actions to keep the store lean.
+        Record BOTH successful AND failed actions with MEANINGFUL outcomes.
+        Agent learns from failures as much as successes!
+        Shows what happened, whether it worked, and any errors.
         """
         if not self.accomplishments:
             return
@@ -593,51 +678,95 @@ class ActionHandler:
         if not acc_type:
             return  # Skip recording wait, scroll, etc.
         
-        # Build concise description and evidence
+        # Get action history for this action to see what actually happened
+        from web_agent.storage.action_history_store import get_action_history_store
+        
+        recent_actions = get_action_history_store().get_recent_actions(count=1)
+        action_outcome = recent_actions[0] if recent_actions else None
+        
+        # Build MEANINGFUL description with outcomes AND errors
         description = ""
         evidence = metadata.copy() if metadata else {}
         context = {}
         
+        # Add success/failure indicator
+        status_prefix = "✓" if success else "✗"
+        
         if action.action_type == ActionType.NAVIGATE:
             url = action.parameters.get("url", "")
-            description = f"Navigated to {url}"
+            description = f"{status_prefix} Navigated to {url}"
             context["url"] = url
+            if success and action_outcome and action_outcome.url_changed:
+                description += f" → reached {action_outcome.after_context.url}"
+            elif not success:
+                description += f" → FAILED: {error or 'Unknown error'}"
             
         elif action.action_type == ActionType.TYPE:
             text = action.parameters.get("text", "")
             element_id = action.parameters.get("element_id")
-            description = f"Typed '{text}' into element {element_id}"
+            description = f"{status_prefix} Typed '{text}' into element {element_id}"
             evidence["text"] = text
             evidence["element_id"] = element_id
+            if success and action.reasoning:
+                description += f" ({action.reasoning[:50]})"
+            elif not success:
+                description += f" → FAILED: {error or 'Type action failed'}"
             
         elif action.action_type == ActionType.CLICK:
             element_id = action.parameters.get("element_id")
-            description = f"Clicked element {element_id}"
+            description = f"{status_prefix} Clicked element {element_id}"
             evidence["element_id"] = element_id
             
+            if success and action_outcome:
+                # Success: show what happened
+                if action_outcome.url_changed:
+                    description += f" → navigated to {action_outcome.after_context.url}"
+                elif action_outcome.changes_observed:
+                    changes = ", ".join(action_outcome.changes_observed[:2])
+                    description += f" → {changes}"
+                elif action.reasoning:
+                    description += f" ({action.reasoning[:60]})"
+            elif not success:
+                # Failure: show error
+                description += f" → FAILED: {error or 'Click failed'}"
+            
         elif action.action_type == ActionType.PRESS_ENTER:
-            description = "Pressed Enter"
+            description = f"{status_prefix} Pressed Enter"
+            if success and action_outcome and action_outcome.url_changed:
+                description += f" → navigated to {action_outcome.after_context.url}"
+            elif not success:
+                description += f" → FAILED: {error or 'Enter failed'}"
             
         elif action.action_type == ActionType.STORE_DATA:
             key = action.parameters.get("key", "")
             value = action.parameters.get("value")
-            description = f"Extracted data: {key}"
+            description = f"{status_prefix} Extracted {key} = {str(value)[:50]}"
             evidence["value"] = value
             context["key"] = key
+            if not success:
+                description += f" → FAILED: {error or 'Store failed'}"
             
         elif action.action_type == ActionType.MARK_COMPLETE:
             reasoning = action.parameters.get("reasoning", "")
-            description = f"Completed: {reasoning}"
+            description = f"{status_prefix} Completed: {reasoning[:100]}"
             evidence["reasoning"] = reasoning
+            if not success:
+                description += f" → FAILED: {error or 'Completion mark failed'}"
+        
+        # Add success/error to context for filtering
+        context["success"] = success
+        if error:
+            context["error"] = error
         
         # Add current URL to context
         try:
             current_url = await self.browser.get_url()
             context["url"] = current_url
+            context["reasoning"] = action.reasoning if action.reasoning else ""
         except Exception:
             pass
         
-        # Record it
+        # Record it with full outcome (success or failure)
         try:
             self.accomplishments.record(
                 type=acc_type,

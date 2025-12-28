@@ -76,9 +76,16 @@ coverage.xml
 cache/
 *.db-journal
 
-# OmniParser weights (large files)
+# OmniParser weights and training artifacts (large files)
 OmniParser/weights/
 OmniParser/ckpts/
+OmniParser/runs/
+OmniParser/fonts/
+*.pt
+*.pth
+*.onnx
+rtdetr-*.pt
+yolo*.pt
 
 # Jupyter Notebook
 .ipynb_checkpoints
@@ -129,6 +136,11 @@ GIT_LFS_SETUP.md
 test_*.html
 test_report.txt
 mock_screen_parser.py
+tests/manual_scripts/
+test_*.py
+!tests/**/test_*.py
+OmniParser/test_*.py
+OmniParser/monitor_*.sh
 
 # Google Cloud SDK
 google-cloud-sdk/

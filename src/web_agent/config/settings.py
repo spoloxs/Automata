@@ -11,23 +11,25 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 # Browser Settings (defined early so other settings can reference it)
 BROWSER_HEADLESS = False
-# Desktop viewport size (16:10 aspect ratio to match 1920x1200 screen)
-# Using 1440×900 - standard desktop resolution that fits well on 1920x1200 displays
-BROWSER_WINDOW_SIZE = (1440, 900)
+# Custom viewport size - optimized for specific use case
+BROWSER_WINDOW_SIZE = (936, 1129)
 BROWSER_TIMEOUT = 30000  # milliseconds
 
 # OmniParser Configuration
 OMNIPARSER_ROOT = PROJECT_ROOT / "OmniParser"
 OMNIPARSER_WEIGHTS = OMNIPARSER_ROOT / "weights"
-ICON_DETECT_MODEL = OMNIPARSER_WEIGHTS / "icon_detect" / "model.pt"
+# 🎯 Using trained YOLO Grid Detector for crossword grids
+ICON_DETECT_MODEL = OMNIPARSER_ROOT / "runs" / "yolo_mega" / "grid_detector_mega" / "weights" / "best.pt"
 ICON_CAPTION_MODEL = OMNIPARSER_WEIGHTS / "icon_caption_qwen"
 
-# OmniParser Settings
-BOX_THRESHOLD = 0.01
-IOU_THRESHOLD = 0.9
+# OmniParser Settings - Optimized for YOLO Grid Detector
+# BOX_THRESHOLD: 0.89 - Optimized for grid detection based on testing
+# IOU_THRESHOLD: 0.5 - Optimized overlap suppression
+BOX_THRESHOLD = 0.89
+IOU_THRESHOLD = 0.5
 USE_PADDLE_OCR = False  # Use EasyOCR (faster, more accurate, less RAM than PaddleOCR)
 # Match browser width to avoid downscaling (was 640, caused 50%+ resolution loss)
-OMNIPARSER_IMGSZ = BROWSER_WINDOW_SIZE[0]  # 1440px - same as browser width
+OMNIPARSER_IMGSZ = BROWSER_WINDOW_SIZE[0]  # 936px - same as browser width
 # Reduced batch size for lower RAM usage (128 → 16)
 # NOTE: batch_size parameter removed from get_som_labeled_img calls (not in gradio demo)
 # This setting is kept for future use if needed

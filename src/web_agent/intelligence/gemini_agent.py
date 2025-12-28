@@ -5,16 +5,20 @@ WITH LANGCHAIN STRUCTURED OUTPUTS (PROPERLY!)
 
 import base64
 import io
+import time
+import asyncio
 from typing import Any, Dict, List, Optional
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_google_genai import ChatGoogleGenerativeAI
+from google.api_core.exceptions import ResourceExhausted, ServiceUnavailable, InternalServerError
 from PIL import Image
 from pydantic import BaseModel, Field
 
 from web_agent.config.settings import GEMINI_API_KEY
 from web_agent.intelligence.prompt_builder import PromptBuilder
 from web_agent.intelligence.tool_definitions import get_browser_tools
+from web_agent.util.logger import log_debug, log_error, log_info, log_success, log_warn
 
 
 # Pydantic Models for Structured Outputs
@@ -134,10 +138,11 @@ class GeminiAgent:
     Uses Gemini 2.5 Pro for all interactions with proper structured outputs.
     """
 
-    def __init__(self, api_key: str = GEMINI_API_KEY, use_cache: bool = True):
+    def __init__(self, api_key: str = GEMINI_API_KEY, use_cache: bool = True, enable_micro_agents: bool = True):
         self.api_key = api_key
         self.model_name = "gemini-2.5-pro"
         self.use_cache = use_cache
+        self.enable_micro_agents = enable_micro_agents
         
         # Initialize cache if enabled
         if self.use_cache:
@@ -154,7 +159,9 @@ class GeminiAgent:
         )
         from langchain_core.utils.function_calling import convert_to_openai_tool
 
-        tools_schema = [convert_to_openai_tool(tool) for tool in get_browser_tools()]
+        tools_schema = [convert_to_openai_tool(tool) for tool in get_browser_tools(
+            enable_micro_agents=enable_micro_agents
+        )]
         # Enable parallel tool calling by binding tools with proper configuration
         self.action_llm_with_tools = self.action_llm.bind_tools(
             tools_schema,
@@ -209,7 +216,7 @@ class GeminiAgent:
         ).with_structured_output(HealthAssessmentOutput)
 
         self.chat_histories: Dict[str, List] = {}
-        print(f"🤖 GeminiAgent initialized with {self.model_name} (LangChain)")
+        log_info(f"🤖 GeminiAgent initialized with {self.model_name} (LangChain)")
 
     async def decide_action(
         self,
@@ -221,8 +228,8 @@ class GeminiAgent:
         viewport_size: tuple,
         accomplishment_summary: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
-        print(f"\n      🤔 Gemini deciding action for thread {thread_id}...")
-        print(f"      Task: {task}")
+        log_info(f"\n      🤔 Gemini deciding action for thread {thread_id}...")
+        log_debug(f"      Task: {task}")
 
         prompt = PromptBuilder.build_action_prompt(
             task=task,
@@ -240,9 +247,9 @@ class GeminiAgent:
         else:
             log_preview = prompt
         
-        print("--- PROMPT SENT TO GEMINI ---")
-        print(log_preview)
-        print("-----------------------------")
+        log_debug("--- PROMPT SENT TO GEMINI ---")
+        log_debug(log_preview)
+        log_debug("-----------------------------")
         if thread_id not in self.chat_histories:
             self.chat_histories[thread_id] = []
         history = self.chat_histories[thread_id]
@@ -254,15 +261,30 @@ class GeminiAgent:
             # Keep only recent history
             history = history[-(MAX_HISTORY_PAIRS * 2):]
             self.chat_histories[thread_id] = history
-            print(f"      🧹 Trimmed history to last {MAX_HISTORY_PAIRS} exchanges")
+            log_debug(f"      🧹 Trimmed history to last {MAX_HISTORY_PAIRS} exchanges")
         
         try:
             messages = history + [HumanMessage(content=prompt)]
-            response = await self.action_llm_with_tools.ainvoke(messages)
+            
+            # Retry logic for transient API errors
+            max_retries = 3
+            base_delay = 2
+            
+            for attempt in range(max_retries):
+                try:
+                    response = await self.action_llm_with_tools.ainvoke(messages)
+                    break
+                except (ResourceExhausted, ServiceUnavailable, InternalServerError) as e:
+                    if attempt == max_retries - 1:
+                        raise e
+                    
+                    delay = base_delay * (2 ** attempt)
+                    log_warn(f"      ⚠️ Gemini API error (attempt {attempt+1}/{max_retries}): {e}. Retrying in {delay}s...")
+                    await asyncio.sleep(delay)
 
-            print("--- RAW RESPONSE FROM GEMINI ---")
-            print(str(response)[:300] + "...")  # Truncate log
-            print("--------------------------------")
+            log_debug("--- RAW RESPONSE FROM GEMINI ---")
+            log_debug(str(response)[:300] + "...")  # Truncate log
+            log_debug("--------------------------------")
 
             # Check for malformed function call
             finish_reason = None
@@ -270,7 +292,7 @@ class GeminiAgent:
                 finish_reason = response.response_metadata.get("finish_reason")
             
             if finish_reason == "MALFORMED_FUNCTION_CALL":
-                print(f"      ⚠️  MALFORMED_FUNCTION_CALL detected - falling back to single action")
+                log_warn(f"      ⚠️  MALFORMED_FUNCTION_CALL detected - falling back to single action")
                 # Clear history to reset context and try again with simpler prompt
                 # Ask for just ONE action to avoid complexity
                 simple_prompt = prompt.replace(
@@ -279,7 +301,7 @@ class GeminiAgent:
                 )
                 simple_messages = [HumanMessage(content=simple_prompt)]
                 response = await self.action_llm_with_tools.ainvoke(simple_messages)
-                print(f"      🔄 Retry response: {str(response)[:200]}")
+                log_info(f"      🔄 Retry response: {str(response)[:200]}")
 
             history.append(HumanMessage(content=prompt))
             history.append(response)
@@ -287,14 +309,14 @@ class GeminiAgent:
             actions = []
             if hasattr(response, "tool_calls") and response.tool_calls:
                 for tool_call in response.tool_calls:
-                    print(
+                    log_info(
                         f"      🛠️ Tool Call: {tool_call['name']} args={tool_call['args']}"
                     )
                     actions.append(
                         {"tool": tool_call["name"], "parameters": tool_call["args"]}
                     )
             if not actions and response.content:
-                print(f"      💬 Gemini response (no tool call): {response.content[:200]}")
+                log_info(f"      💬 Gemini response (no tool call): {response.content[:200]}")
             
             # CRITICAL: Store pending tool calls for later result attachment
             # This allows action_loop to add ToolMessages after execution
@@ -302,7 +324,7 @@ class GeminiAgent:
             
             return actions
         except Exception as e:
-            print(f"      ❌ Gemini API error in decide_action: {e}")
+            log_error(f"      ❌ Gemini API error in decide_action: {e}")
             import traceback
 
             traceback.print_exc()
@@ -359,7 +381,7 @@ class GeminiAgent:
                 "issues": result.issues,
             }
         except Exception as e:
-            print(f"      ❌ Verification error: {e}")
+            log_error(f"      ❌ Verification error: {e}")
             import traceback
 
             traceback.print_exc()
@@ -416,8 +438,8 @@ class GeminiAgent:
             # Free base64 after sending
             del img_base64, message
             
-            print(f"      ✅ Visual analysis complete: {result.answer[:100]}")
-            print(f"      🔍 Found {len(result.all_elements_found)} elements on screen")
+            log_success(f"      ✅ Visual analysis complete: {result.answer[:100]}")
+            log_info(f"      🔍 Found {len(result.all_elements_found)} elements on screen")
             
             # CRITICAL: Normalize pixel coordinates to 0-1 range for ALL elements
             # Gemini returns pixels, we need to normalize to match OmniParser
@@ -427,9 +449,9 @@ class GeminiAgent:
                     x_pixel, y_pixel = result.target_coordinates[0], result.target_coordinates[1]
                     width, height = viewport_size
                     normalized_coords = [x_pixel / width, y_pixel / height]
-                    print(f"      📍 Normalized coords: pixel ({x_pixel}, {y_pixel}) → [{normalized_coords[0]:.3f}, {normalized_coords[1]:.3f}]")
+                    log_debug(f"      📍 Normalized coords: pixel ({x_pixel}, {y_pixel}) → [{normalized_coords[0]:.3f}, {normalized_coords[1]:.3f}]")
                 except Exception as e:
-                    print(f"      ⚠️  Coordinate normalization failed: {e}")
+                    log_warn(f"      ⚠️  Coordinate normalization failed: {e}")
                     normalized_coords = result.target_coordinates  # Use as-is if normalization fails
             else:
                 normalized_coords = result.target_coordinates
@@ -502,7 +524,7 @@ class GeminiAgent:
             return final_result
             
         except Exception as e:
-            print(f"      ❌ Visual analysis error: {e}")
+            log_error(f"      ❌ Visual analysis error: {e}")
             import traceback
 
             traceback.print_exc()
@@ -548,7 +570,7 @@ class GeminiAgent:
                 "estimated_total_time": result.estimated_total_time,
             }
         except Exception as e:
-            print(f"      ❌ Planning error: {e}")
+            log_error(f"      ❌ Planning error: {e}")
             import traceback
 
             traceback.print_exc()
@@ -636,7 +658,7 @@ class GeminiAgent:
                         elif isinstance(response2, str) and response2:
                             return response2.strip()
                     except Exception as e:
-                        print(f"      ❌ Summarization LLM fallback error: {e}")
+                        log_warn(f"      ❌ Summarization LLM fallback error: {e}")
 
             # If LLM not available or failed, produce a lightweight heuristic summary
             bullets = []
@@ -649,7 +671,7 @@ class GeminiAgent:
             return "\n".join(bullets[:8])
 
         except Exception as e:
-            print(f"      ❌ Summarization error for thread {thread_id}: {e}")
+            log_warn(f"      ❌ Summarization error for thread {thread_id}: {e}")
             return conversation.get("summary", "") or ""
 
     def append_tool_results(self, thread_id: str, tool_results: List[Dict[str, Any]]):
@@ -682,12 +704,12 @@ class GeminiAgent:
             )
             history.append(tool_msg)
             
-        print(f"      📝 Added {len(tool_results)} tool result(s) to history")
+        log_debug(f"      📝 Added {len(tool_results)} tool result(s) to history")
     
     def clear_context(self, thread_id: str):
         if thread_id in self.chat_histories:
             del self.chat_histories[thread_id]
-            print(f"   🧹 Cleared context for thread {thread_id[:12]}")
+            log_debug(f"   🧹 Cleared context for thread {thread_id[:12]}")
 
     def get_active_sessions(self) -> int:
         return len(self.chat_histories)
