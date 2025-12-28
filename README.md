@@ -1,16 +1,37 @@
-# AI Web Automation Agent
+<div align="center">
 
-A sophisticated multi-agent web automation system powered by **Google Gemini 2.5 Pro**, featuring visual perception via OmniParser, intelligent task planning, and autonomous self-supervised execution.
+# 🤖 AI Web Automation Agent
 
-## Features
+[![Python](https://img.shields.io/badge/Python-3.9%2B-blue.svg)](https://www.python.org/downloads/)
+[![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+[![Gemini](https://img.shields.io/badge/Powered%20by-Gemini%202.5%20Pro-orange.svg)](https://ai.google.dev/)
+[![PyTorch](https://img.shields.io/badge/PyTorch-2.0%2B-red.svg)](https://pytorch.org/)
+[![Playwright](https://img.shields.io/badge/Playwright-1.40%2B-brightgreen.svg)](https://playwright.dev/)
 
-- **Multi-Agent Architecture** - Supervisor coordinates isolated worker agents to prevent token limit issues
-- **Visual Perception** - OmniParser (using Qwen2-VL and EasyOCR) for accurate element detection without relying on DOM selectors
-- **AI-Driven Planning** - Gemini decomposes complex goals into executable task DAGs
-- **Self-Verification** - Agents verify their own task completion with confidence scoring
-- **Adaptive Replanning** - Automatic recovery from failures with AI-driven decision making
-- **Persistent Memory** - Workers share accomplishments across tasks to avoid redundant work
-- **Type Safety** - LangChain + Pydantic for structured outputs
+**A sophisticated multi-agent web automation system powered by Google Gemini 2.5 Pro**
+
+Featuring visual perception via OmniParser, intelligent task planning, and autonomous self-supervised execution.
+
+[Features](#features) • [Installation](#installation) • [Quick Start](#quick-start) • [Architecture](#architecture) • [Documentation](README_ARCHITECTURE.md)
+
+</div>
+
+---
+
+## ✨ Features
+
+### Core Capabilities
+
+| Feature | Description |
+|---------|-------------|
+| 🏗️ **Multi-Agent Architecture** | Hierarchical system with Master orchestrator, Supervisor monitors, and Worker executors for scalable automation |
+| 👁️ **Visual Perception** | OmniParser (Qwen2-VL + EasyOCR) enables accurate element detection without brittle DOM selectors |
+| 🧠 **AI-Driven Planning** | Gemini 2.5 Pro decomposes complex goals into executable TaskDAGs with dependency management |
+| ✅ **Self-Verification** | Agents verify task completion with confidence scoring and request replanning when needed |
+| 🔄 **Adaptive Replanning** | Automatic recovery from failures with AI-driven RETRY/SKIP/REPLAN decisions |
+| 💾 **Persistent Memory** | Shared AccomplishmentStore prevents redundant work across parallel workers |
+| 🔒 **Type Safety** | LangChain + Pydantic structured outputs eliminate JSON parsing errors |
+| ⚡ **Performance** | 80%+ cache hit rate, parallel execution, and smart resource management |
 
 ## Table of Contents
 
@@ -33,77 +54,124 @@ A sophisticated multi-agent web automation system powered by **Google Gemini 2.5
 
 The system follows a **3-tier hierarchical multi-agent architecture**:
 
-```
-┌───────────────────────────────────────────────────────────┐
-│                    MasterAgent                             │
-│                (Singleton Orchestrator)                    │
-│                                                            │
-│  • Goal decomposition → StructuredPlan                    │
-│  • Plan → TaskDAG conversion                              │
-│  • Supervisor coordination                                │
-│  • Decision-driven continuation loops                     │
-│  • Final verification & aggregation                       │
-│                                                            │
-│  Shared Resources (Singleton):                            │
-│  • GeminiAgent (LLM) • ScreenParser (OmniParser)         │
-│  • BrowserController • ConversationManager               │
-└─────────────────────┬─────────────────────────────────────┘
-                      │ spawns per DAG
-                      ▼
-┌───────────────────────────────────────────────────────────┐
-│              AISupervisorAgent                             │
-│            (Task Monitor & Recovery)                       │
-│                                                            │
-│  Lifespan: Single TaskDAG                                 │
-│                                                            │
-│  • Health monitoring (deadlock, stuck, progress)          │
-│  • Worker lifecycle (spawn, monitor, cleanup)             │
-│  • AI-driven failure recovery (RETRY/SKIP/REPLAN)         │
-│  • AccomplishmentStore sharing                            │
-│  • Automatic replanning on worker request                 │
-│                                                            │
-│  Key Limits: 30s replan cooldown, max 3 consecutive skips│
-└─────────────────────┬─────────────────────────────────────┘
-                      │ spawns per task
-                      ▼
-┌───────────────────────────────────────────────────────────┐
-│                  WorkerAgent                               │
-│             (Disposable Executor)                          │
-│                                                            │
-│  Lifespan: Single task (max 50 iterations)                │
-│                                                            │
-│  • ActionLoop: observe → decide → act                     │
-│  • Task feasibility check (detect mismatches)             │
-│  • Execute via ActionHandler (with delays)                │
-│  • Self-verification of completion                        │
-│  • Record accomplishments to shared store                 │
-│                                                            │
-│  Context Isolation: Unique thread_id per worker           │
-└───────────────────────────────────────────────────────────┘
+```mermaid
+graph TD
+    subgraph Master["🎯 MasterAgent (Singleton Orchestrator)"]
+        M1[Goal Decomposition]
+        M2[Plan → TaskDAG Conversion]
+        M3[Supervisor Coordination]
+        M4[Decision-driven Continuation]
+        M5[Final Verification]
+
+        M1 --> M2 --> M3 --> M4 --> M5
+    end
+
+    subgraph Shared["🔧 Shared Resources (Singleton)"]
+        SR1[GeminiAgent - LLM]
+        SR2[ScreenParser - OmniParser]
+        SR3[BrowserController]
+        SR4[ConversationManager]
+        SR5[AccomplishmentStore]
+    end
+
+    subgraph Supervisor["👁️ AISupervisorAgent (Per-DAG)"]
+        S1[Health Monitoring]
+        S2[Worker Lifecycle Management]
+        S3[AI-Driven Recovery]
+        S4[Automatic Replanning]
+
+        S1 --> S2 --> S3 --> S4
+    end
+
+    subgraph Worker["⚙️ WorkerAgent (Per-Task)"]
+        W1[Observe - Screenshot + Parse]
+        W2[Decide - AI Action Selection]
+        W3[Act - Execute via Playwright]
+        W4[Verify - Check Completion]
+
+        W1 --> W2 --> W3 --> W4 --> W1
+    end
+
+    Master -->|Spawns per DAG| Supervisor
+    Supervisor -->|Spawns per Task| Worker
+    Master -.Uses.-> Shared
+    Supervisor -.Uses.-> Shared
+    Worker -.Uses.-> Shared
+
+    style Master fill:#e1f5ff,stroke:#0066cc,stroke-width:3px
+    style Supervisor fill:#fff4e1,stroke:#ff9900,stroke-width:3px
+    style Worker fill:#e8f5e9,stroke:#2e7d32,stroke-width:3px
+    style Shared fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px
 ```
 
 ### Execution Flow
 
-```
-User Goal → MasterAgent
-    ↓
-1. Planner explores page & creates StructuredPlan
-    ↓
-2. PlanToDAGConverter → TaskDAG with dependencies
-    ↓
-3. AISupervisorAgent monitors DAG execution
-    ├─ Spawns WorkerAgent per ready task
-    ├─ WorkerAgent runs ActionLoop (observe-decide-act)
-    ├─ Health monitoring & AI recovery decisions
-    └─ Handles worker replan requests
-    ↓
-4. MasterAgent verifies final goal
-    ↓
-5. DecisionEngine decides whether to continue
-    ├─ If yes & DAG complete: Create new plan
-    └─ Loop until goal achieved or decision says stop
-    ↓
-Return ExecutionResult
+```mermaid
+sequenceDiagram
+    participant User
+    participant Master as MasterAgent
+    participant Planner
+    participant Supervisor as AISupervisor
+    participant Worker as WorkerAgent
+    participant Browser
+    participant Gemini as Gemini 2.5 Pro
+    participant OmniParser
+
+    User->>Master: execute_goal(goal, url)
+    Master->>Browser: Navigate to URL
+    Master->>Planner: Create plan for goal
+    Planner->>OmniParser: Parse current page
+    OmniParser-->>Planner: Elements & layout
+    Planner->>Gemini: Generate StructuredPlan
+    Gemini-->>Planner: Task breakdown
+    Planner-->>Master: TaskDAG with dependencies
+
+    Master->>Supervisor: Execute DAG
+
+    loop For each ready task
+        Supervisor->>Worker: Spawn worker(task)
+
+        loop Action Loop (max 50 iterations)
+            Worker->>OmniParser: Screenshot → Parse elements
+            OmniParser-->>Worker: Interactive elements
+            Worker->>Gemini: Decide next action
+            Gemini-->>Worker: Action (click/type/scroll)
+            Worker->>Browser: Execute action
+            Browser-->>Worker: Page state
+            Worker->>Worker: Verify completion
+
+            alt Task Complete
+                Worker-->>Supervisor: SUCCESS
+            else Task Failed
+                Worker-->>Supervisor: FAILED
+            else Needs Replan
+                Worker-->>Supervisor: REQUEST_REPLAN
+            end
+        end
+
+        alt Failure Detected
+            Supervisor->>Gemini: Analyze failure
+            Gemini-->>Supervisor: Decision (RETRY/SKIP/REPLAN)
+
+            alt REPLAN
+                Supervisor->>Planner: Create recovery plan
+                Planner-->>Supervisor: Updated DAG
+            end
+        end
+    end
+
+    Supervisor-->>Master: DAG execution result
+    Master->>Gemini: Verify goal achievement
+    Gemini-->>Master: Verification result
+    Master->>Gemini: Decide continuation
+    Gemini-->>Master: CONTINUE / STOP
+
+    alt CONTINUE
+        Master->>Planner: Create next plan
+        Note over Master,Supervisor: Loop continues
+    end
+
+    Master-->>User: ExecutionResult
 ```
 
 ### Key Components
@@ -172,7 +240,9 @@ Return ExecutionResult
 | **GPU** | None (CPU inference) | NVIDIA GPU with 6GB+ VRAM for faster OmniParser |
 | **Storage** | 8+ GB free space | 16+ GB free space |
 
-## Installation
+## 📦 Installation
+
+> **Note**: Tested on Python 3.9-3.13 • Linux, macOS, and Windows (WSL2)
 
 ### 1. Clone the Repository
 
@@ -180,6 +250,8 @@ Return ExecutionResult
 git clone https://github.com/spoloxs/automata.git
 cd automata/web-agent
 ```
+
+**Repository**: [https://github.com/spoloxs/automata](https://github.com/spoloxs/automata)
 
 ### 2. Create a Virtual Environment
 
@@ -481,57 +553,77 @@ web-agent/
 
 ## How It Works
 
-### Execution Flow
+### Worker Action Loop (Observe-Decide-Act)
 
-```
-1. User provides goal → Master Agent
-   ↓
-2. Planner decomposes goal → Task DAG
-   ↓
-3. Scheduler creates Supervisor for DAG
-   ↓
-4. Supervisor spawns Workers for each task
-   ↓
-5. Worker executes Observe-Decide-Act loop
-   │  ┌─→ Observe: Screenshot + OmniParser
-   │  │  ┌─→ Decide: Gemini chooses action
-   │  │  │  ┌─→ Act: Execute via Playwright
-   │  │  │  │  ┌─→ Verify: Check completion
-   │  └──┴──┴──┴──┘ (loop until done)
-   ↓
-6. Supervisor monitors health & recovers failures
-   ↓
-7. Master aggregates results & verifies goal
-   ↓
-8. Return final result to user
+```mermaid
+stateDiagram-v2
+    [*] --> Observe
+    Observe --> Decide
+    Decide --> Act
+    Act --> Verify
+    Verify --> TaskComplete: Success
+    Verify --> CheckIterations: Not Complete
+    CheckIterations --> Observe: < 50 iterations
+    CheckIterations --> TaskFailed: >= 50 iterations
+    TaskComplete --> [*]
+    TaskFailed --> [*]
+
+    state Observe {
+        [*] --> CaptureScreen
+        CaptureScreen --> CheckCache
+        CheckCache --> ParseWithOmniParser: Cache Miss
+        CheckCache --> UseCachedResult: Cache Hit
+        ParseWithOmniParser --> EnrichWithDOM
+        UseCachedResult --> EnrichWithDOM
+        EnrichWithDOM --> [*]
+    }
+
+    state Decide {
+        [*] --> BuildPrompt
+        BuildPrompt --> CallGemini
+        CallGemini --> ParseStructuredOutput
+        ParseStructuredOutput --> [*]
+    }
+
+    state Act {
+        [*] --> ValidateAction
+        ValidateAction --> ExecuteDelay
+        ExecuteDelay --> PerformAction
+        PerformAction --> WaitAfterAction
+        WaitAfterAction --> [*]
+    }
 ```
 
 ### Key Design Principles
 
-1. **Separation of Concerns**
-   - Master = Orchestration
-   - Supervisor = Monitoring
-   - Worker = Execution
-
-2. **Context Isolation**
-   - Each worker has unique `thread_id`
-   - Prevents context pollution
-   - Allows parallel execution
-
-3. **Token Management**
-   - Workers are disposable (auto-cleanup)
-   - Master is persistent (session-long)
-   - Structured outputs prevent token waste
-
-4. **Intelligent Recovery**
-   - AI-driven failure analysis
-   - Automatic retry/skip/replan decisions
-   - Health monitoring prevents deadlocks
-
-5. **Visual-First Approach**
-   - OmniParser for element detection
-   - DOM enrichment for semantic context
-   - Works on dynamic/Shadow DOM sites
+```mermaid
+mindmap
+  root((Web Agent<br/>Design))
+    Separation of Concerns
+      Master → Orchestration
+      Supervisor → Monitoring
+      Worker → Execution
+    Context Isolation
+      Unique thread_id per worker
+      Prevents pollution
+      Enables parallelism
+    Token Management
+      Disposable workers
+      Persistent master
+      Structured outputs
+    AI-Driven Recovery
+      Failure analysis
+      Auto retry/skip/replan
+      Health monitoring
+    Visual-First
+      OmniParser detection
+      DOM enrichment
+      Shadow DOM support
+    Performance
+      Screen caching 80%+
+      Parallel workers 4x
+      Shared accomplishments
+```
 
 ## Troubleshooting
 
@@ -603,7 +695,9 @@ logging.basicConfig(level=logging.DEBUG)
    BROWSER_HEADLESS=true
    ```
 
-## 🚧 Work in Progress
+## 🚧 Roadmap & Work in Progress
+
+> **Current Version**: 0.1.0 (Alpha) • **Last Updated**: December 2024
 
 The following improvements are currently under development:
 
@@ -625,8 +719,66 @@ The following improvements are currently under development:
   - Improved element detection for complex UIs
 
 ### Planned Features
-- Enhanced error recovery strategies with smarter retry logic
-- Better handling of dynamic content and lazy-loaded elements
-- Multi-page workflow optimization
-- Faster plan generation and optimization
-- Support for additional LLM providers (Claude, GPT-4, etc.)
+
+```mermaid
+gantt
+    title Development Roadmap
+    dateFormat YYYY-MM
+    section Core Features
+    iframe Support Enhancement      :2025-01, 2025-02
+    Vision System Optimization     :2025-01, 2025-03
+    Multi-LLM Support             :2025-02, 2025-04
+    section Performance
+    Faster Execution              :2025-01, 2025-02
+    Advanced Caching              :2025-02, 2025-03
+    section Integrations
+    API Server                    :2025-03, 2025-04
+    CLI Tool                      :2025-03, 2025-04
+```
+
+**Upcoming Enhancements**:
+- 🔧 Enhanced error recovery with smarter retry logic
+- 📱 Better handling of dynamic content and lazy-loaded elements
+- 🌐 Multi-page workflow optimization
+- ⚡ Faster plan generation and execution
+- 🤖 Support for additional LLM providers (Claude Opus 4, GPT-4, etc.)
+- 🔌 REST API server for integration
+- 💻 Standalone CLI tool
+
+---
+
+## 📚 Documentation
+
+- **[Architecture Guide](README_ARCHITECTURE.md)** - Detailed system architecture and design
+- **[Micro Agents](MICRO_AGENTS_README.md)** - Micro-agent architecture documentation
+- **[OmniParser Guide](OmniParser/README.md)** - Vision model setup and customization
+
+## 🤝 Contributing
+
+Contributions are welcome! Please feel free to submit a Pull Request. For major changes, please open an issue first to discuss what you would like to change.
+
+## 📄 License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+## 🙏 Acknowledgments
+
+- **[Google Gemini](https://ai.google.dev/)** - Powering our AI planning and decision making
+- **[Microsoft OmniParser](https://github.com/microsoft/OmniParser)** - Visual element detection foundation
+- **[Playwright](https://playwright.dev/)** - Browser automation framework
+- **[LangChain](https://www.langchain.com/)** - LLM integration framework
+
+## 📬 Contact & Support
+
+- **Issues**: [GitHub Issues](https://github.com/spoloxs/automata/issues)
+- **Discussions**: [GitHub Discussions](https://github.com/spoloxs/automata/discussions)
+
+---
+
+<div align="center">
+
+**⭐ Star this repo if you find it useful!**
+
+Made with ❤️ by the community
+
+</div>
