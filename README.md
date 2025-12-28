@@ -360,7 +360,74 @@ python scripts/verify_setup.py
 
 ## Quick Start
 
-### Simple Example
+### 🚀 Interactive CLI (Easiest Way)
+
+The simplest way to use the agent is through the interactive CLI:
+
+```bash
+# Run the CLI tool
+python cli.py
+
+# Or use the wrapper script
+./automate
+```
+
+The CLI will prompt you for:
+- **Target URL**: The website to automate (e.g., `https://www.google.com`)
+- **Task**: What you want to accomplish (e.g., `Search for 'Python' and click first result`)
+- **Workers**: Number of parallel workers (default: 2)
+
+**Example session:**
+```
+╔═══════════════════════════════════════════════════════════╗
+║                                                           ║
+║        🤖 AI Web Automation Agent CLI v0.1.0             ║
+║                                                           ║
+║        Powered by Gemini 2.5 Pro + OmniParser            ║
+║                                                           ║
+╚═══════════════════════════════════════════════════════════╝
+
+Enter automation details:
+
+Target URL: https://www.google.com
+Task: Search for 'Python asyncio tutorial' and click first result
+Max parallel workers [2]: 2
+
+✓ Automation completed successfully! ✨
+```
+
+### 💻 Command Line Arguments
+
+For automation scripts or CI/CD:
+
+```bash
+# Direct execution with arguments
+python cli.py --url "https://www.google.com" \
+              --task "Search for 'Python' and click first result"
+
+# With custom settings
+python cli.py --url "https://example.com" \
+              --task "Fill contact form" \
+              --workers 4 \
+              --headless
+
+# Show help
+python cli.py --help
+```
+
+**CLI Options:**
+| Option | Short | Description | Default |
+|--------|-------|-------------|---------|
+| `--url` | `-u` | Target URL to automate | Interactive prompt |
+| `--task` | `-t` | Task description | Interactive prompt |
+| `--workers` | `-w` | Max parallel workers | 2 |
+| `--headless` | - | Run browser in headless mode | Visible |
+| `--version` | `-v` | Show version | - |
+| `--help` | `-h` | Show help message | - |
+
+### 🐍 Python API
+
+For integration into your own scripts:
 
 ```python
 import asyncio
@@ -389,7 +456,7 @@ if __name__ == "__main__":
     asyncio.run(main())
 ```
 
-### Running Examples
+### 📚 Example Scripts
 
 ```bash
 # Simple search example

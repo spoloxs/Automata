@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# Quick wrapper script for the web automation CLI
+
+# Get the directory where this script is located
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+
+# Run the Python CLI
+python3 "$SCRIPT_DIR/cli.py" "$@"
