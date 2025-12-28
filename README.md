@@ -360,9 +360,35 @@ python scripts/verify_setup.py
 
 ## Quick Start
 
-### 🚀 Interactive CLI (Easiest Way)
+### 🎨 Web GUI (Recommended)
 
-The simplest way to use the agent is through the interactive CLI:
+The easiest and most user-friendly way to use the agent:
+
+```bash
+# Start the web interface
+python app.py
+
+# Or use the startup script
+./start_gui.sh
+```
+
+Then open your browser to **http://localhost:7860**
+
+**Features:**
+- 📎 **Upload Documents**: Drag & drop PDFs (resumes, forms, etc.)
+- 🤖 **AI-Powered**: Gemini uses your documents to fill forms automatically
+- 📊 **Real-time Progress**: Watch the automation happen live
+- 💡 **Examples**: Pre-loaded examples to get started quickly
+
+**Example Use Case:**
+1. Upload your resume (PDF)
+2. Enter URL: `https://company.com/careers/apply`
+3. Task: `Fill the job application using my resume`
+4. Click "Run Automation" ✨
+
+### 🚀 Interactive CLI
+
+For command-line enthusiasts:
 
 ```bash
 # Run the CLI tool
