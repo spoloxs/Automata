@@ -184,3 +184,14 @@ celerybeat.pid
 # Backup files
 *.bak
 *.backup
+
+# Dataset files (too large)
+OmniParser/dataset_generator/yolo_webpage_dataset/images/
+OmniParser/dataset_generator/yolo_webpage_dataset/labels/
+OmniParser/dataset_generator/*_output/images/
+OmniParser/dataset_generator/*_output/labels/
+OmniParser/dataset_generator/*_output/visual*/
+OmniParser/dataset_generator/training.log
+OmniParser/dataset_generator/nohup.out
+OmniParser/dataset_generator/dataset_generation.log
+OmniParser/dataset_generator/*.pt

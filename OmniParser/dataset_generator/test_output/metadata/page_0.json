@@ -1,0 +1,75 @@
+{
+  "page_id": 0,
+  "components": [
+    {
+      "component_id": "comp_0",
+      "component_type": "captcha",
+      "category": "forms",
+      "z_index": 0,
+      "expected_visible": true
+    },
+    {
+      "component_id": "comp_1",
+      "component_type": "faceted_search",
+      "category": "ecommerce",
+      "z_index": 0,
+      "expected_visible": true
+    },
+    {
+      "component_id": "comp_2",
+      "component_type": "interstitial_ad",
+      "category": "ads",
+      "z_index": 0,
+      "expected_visible": true
+    },
+    {
+      "component_id": "comp_3",
+      "component_type": "captcha",
+      "category": "forms",
+      "z_index": 0,
+      "expected_visible": true
+    },
+    {
+      "component_id": "comp_4",
+      "component_type": "bottom_sheet",
+      "category": "overlays",
+      "z_index": 0,
+      "expected_visible": true
+    },
+    {
+      "component_id": "comp_5",
+      "component_type": "sudoku_grid",
+      "category": "specialized",
+      "z_index": 0,
+      "expected_visible": true
+    },
+    {
+      "component_id": "comp_6",
+      "component_type": "coupon_input",
+      "category": "ecommerce",
+      "z_index": 0,
+      "expected_visible": true
+    },
+    {
+      "component_id": "comp_7",
+      "component_type": "boxed_section",
+      "category": "layout",
+      "z_index": 0,
+      "expected_visible": true
+    },
+    {
+      "component_id": "comp_8",
+      "component_type": "datetime_picker",
+      "category": "forms",
+      "z_index": 0,
+      "expected_visible": true
+    },
+    {
+      "component_id": "comp_9",
+      "component_type": "form_validation",
+      "category": "forms",
+      "z_index": 0,
+      "expected_visible": true
+    }
+  ]
+}

@@ -1,0 +1,139 @@
+{
+  "page_id": 0,
+  "total_components": 10,
+  "annotated": 8,
+  "invisible": 0,
+  "occluded": 0,
+  "boxes": [
+    {
+      "id": "comp_0",
+      "type": "captcha",
+      "bbox": [
+        24,
+        36,
+        1416,
+        147
+      ],
+      "visible": true,
+      "occluded": false,
+      "annotated": true
+    },
+    {
+      "id": "comp_1",
+      "type": "faceted_search",
+      "bbox": [
+        24,
+        159,
+        1416,
+        270
+      ],
+      "visible": true,
+      "occluded": false,
+      "annotated": true
+    },
+    {
+      "id": "comp_2",
+      "type": "interstitial_ad",
+      "bbox": [
+        24,
+        282,
+        1416,
+        393
+      ],
+      "visible": true,
+      "occluded": false,
+      "annotated": true
+    },
+    {
+      "id": "comp_3",
+      "type": "captcha",
+      "bbox": [
+        24,
+        406,
+        1416,
+        517
+      ],
+      "visible": true,
+      "occluded": false,
+      "annotated": true
+    },
+    {
+      "id": "comp_4",
+      "type": "bottom_sheet",
+      "bbox": [
+        24,
+        529,
+        1416,
+        640
+      ],
+      "visible": true,
+      "occluded": false,
+      "annotated": true
+    },
+    {
+      "id": "comp_5",
+      "type": "sudoku_grid",
+      "bbox": [
+        24,
+        652,
+        1416,
+        763
+      ],
+      "visible": true,
+      "occluded": false,
+      "annotated": true
+    },
+    {
+      "id": "comp_6",
+      "type": "coupon_input",
+      "bbox": [
+        24,
+        775,
+        1416,
+        886
+      ],
+      "visible": true,
+      "occluded": false,
+      "annotated": true
+    },
+    {
+      "id": "comp_7",
+      "type": "boxed_section",
+      "bbox": [
+        24,
+        898,
+        1416,
+        900
+      ],
+      "visible": true,
+      "occluded": false,
+      "annotated": true
+    },
+    {
+      "id": "comp_8",
+      "type": "datetime_picker",
+      "bbox": [
+        24,
+        900,
+        1416,
+        900
+      ],
+      "visible": true,
+      "occluded": false,
+      "annotated": false
+    },
+    {
+      "id": "comp_9",
+      "type": "form_validation",
+      "bbox": [
+        24,
+        900,
+        1416,
+        900
+      ],
+      "visible": true,
+      "occluded": false,
+      "annotated": false
+    }
+  ]
+}

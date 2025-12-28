@@ -1,0 +1,217 @@
+{
+  "page_id": 1,
+  "total_components": 16,
+  "annotated": 1,
+  "invisible": 0,
+  "occluded": 15,
+  "boxes": [
+    {
+      "id": "comp_0",
+      "type": "interstitial_ad",
+      "bbox": [
+        24,
+        36,
+        1416,
+        147
+      ],
+      "visible": true,
+      "occluded": true,
+      "annotated": false
+    },
+    {
+      "id": "comp_1",
+      "type": "section",
+      "bbox": [
+        24,
+        159,
+        1416,
+        270
+      ],
+      "visible": true,
+      "occluded": true,
+      "annotated": false
+    },
+    {
+      "id": "comp_2",
+      "type": "heatmap",
+      "bbox": [
+        24,
+        282,
+        1416,
+        393
+      ],
+      "visible": true,
+      "occluded": true,
+      "annotated": false
+    },
+    {
+      "id": "comp_3",
+      "type": "kanban_board",
+      "bbox": [
+        24,
+        406,
+        1416,
+        517
+      ],
+      "visible": true,
+      "occluded": true,
+      "annotated": false
+    },
+    {
+      "id": "comp_4",
+      "type": "promo_banner",
+      "bbox": [
+        24,
+        529,
+        1416,
+        640
+      ],
+      "visible": true,
+      "occluded": true,
+      "annotated": false
+    },
+    {
+      "id": "comp_5",
+      "type": "slideshow",
+      "bbox": [
+        24,
+        652,
+        1416,
+        763
+      ],
+      "visible": true,
+      "occluded": true,
+      "annotated": false
+    },
+    {
+      "id": "comp_6",
+      "type": "toggle_button",
+      "bbox": [
+        24,
+        775,
+        84,
+        807
+      ],
+      "visible": true,
+      "occluded": true,
+      "annotated": false
+    },
+    {
+      "id": "comp_7",
+      "type": "grid",
+      "bbox": [
+        24,
+        827,
+        1416,
+        900
+      ],
+      "visible": true,
+      "occluded": true,
+      "annotated": false
+    },
+    {
+      "id": "comp_8",
+      "type": "shipping_info",
+      "bbox": [
+        24,
+        900,
+        1416,
+        900
+      ],
+      "visible": true,
+      "occluded": true,
+      "annotated": false
+    },
+    {
+      "id": "comp_9",
+      "type": "pricing_card",
+      "bbox": [
+        24,
+        900,
+        1416,
+        900
+      ],
+      "visible": true,
+      "occluded": true,
+      "annotated": false
+    },
+    {
+      "id": "comp_10",
+      "type": "expansion_panel",
+      "bbox": [
+        24,
+        900,
+        1416,
+        900
+      ],
+      "visible": true,
+      "occluded": true,
+      "annotated": false
+    },
+    {
+      "id": "comp_11",
+      "type": "text_input",
+      "bbox": [
+        24,
+        900,
+        1416,
+        900
+      ],
+      "visible": true,
+      "occluded": true,
+      "annotated": false
+    },
+    {
+      "id": "comp_12",
+      "type": "sale_badge",
+      "bbox": [
+        24,
+        900,
+        1416,
+        900
+      ],
+      "visible": true,
+      "occluded": true,
+      "annotated": false
+    },
+    {
+      "id": "comp_13",
+      "type": "preformatted_text",
+      "bbox": [
+        24,
+        900,
+        1416,
+        900
+      ],
+      "visible": true,
+      "occluded": true,
+      "annotated": false
+    },
+    {
+      "id": "comp_14",
+      "type": "share_button",
+      "bbox": [
+        24,
+        900,
+        1416,
+        900
+      ],
+      "visible": true,
+      "occluded": true,
+      "annotated": false
+    },
+    {
+      "id": "comp_popup",
+      "type": "modal",
+      "bbox": [
+        0,
+        0,
+        1440,
+        900
+      ],
+      "visible": true,
+      "occluded": false,
+      "annotated": true
+    }
+  ]
+}

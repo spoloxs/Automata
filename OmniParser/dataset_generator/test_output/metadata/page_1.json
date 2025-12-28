@@ -1,0 +1,117 @@
+{
+  "page_id": 1,
+  "components": [
+    {
+      "component_id": "comp_0",
+      "component_type": "interstitial_ad",
+      "category": "ads",
+      "z_index": 0,
+      "expected_visible": true
+    },
+    {
+      "component_id": "comp_1",
+      "component_type": "section",
+      "category": "layout",
+      "z_index": 0,
+      "expected_visible": true
+    },
+    {
+      "component_id": "comp_2",
+      "component_type": "heatmap",
+      "category": "specialized",
+      "z_index": 0,
+      "expected_visible": true
+    },
+    {
+      "component_id": "comp_3",
+      "component_type": "kanban_board",
+      "category": "content",
+      "z_index": 0,
+      "expected_visible": true
+    },
+    {
+      "component_id": "comp_4",
+      "component_type": "promo_banner",
+      "category": "ads",
+      "z_index": 0,
+      "expected_visible": true
+    },
+    {
+      "component_id": "comp_5",
+      "component_type": "slideshow",
+      "category": "media",
+      "z_index": 0,
+      "expected_visible": true
+    },
+    {
+      "component_id": "comp_6",
+      "component_type": "toggle_button",
+      "category": "buttons",
+      "z_index": 0,
+      "expected_visible": true
+    },
+    {
+      "component_id": "comp_7",
+      "component_type": "grid",
+      "category": "content",
+      "z_index": 0,
+      "expected_visible": true
+    },
+    {
+      "component_id": "comp_8",
+      "component_type": "shipping_info",
+      "category": "ecommerce",
+      "z_index": 0,
+      "expected_visible": true
+    },
+    {
+      "component_id": "comp_9",
+      "component_type": "pricing_card",
+      "category": "content",
+      "z_index": 0,
+      "expected_visible": true
+    },
+    {
+      "component_id": "comp_10",
+      "component_type": "expansion_panel",
+      "category": "layout",
+      "z_index": 0,
+      "expected_visible": true
+    },
+    {
+      "component_id": "comp_11",
+      "component_type": "text_input",
+      "category": "forms",
+      "z_index": 0,
+      "expected_visible": true
+    },
+    {
+      "component_id": "comp_12",
+      "component_type": "sale_badge",
+      "category": "ecommerce",
+      "z_index": 0,
+      "expected_visible": true
+    },
+    {
+      "component_id": "comp_13",
+      "component_type": "preformatted_text",
+      "category": "typography",
+      "z_index": 0,
+      "expected_visible": true
+    },
+    {
+      "component_id": "comp_14",
+      "component_type": "share_button",
+      "category": "social",
+      "z_index": 0,
+      "expected_visible": true
+    },
+    {
+      "component_id": "comp_popup",
+      "component_type": "modal",
+      "category": "overlays",
+      "z_index": 999,
+      "expected_visible": true
+    }
+  ]
+}
